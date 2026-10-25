@@ -1,4 +1,4 @@
-import {fillOriginalXlsx} from './original-xlsx.js?v=auto4';
+import {fillOriginalXlsx} from './original-xlsx.js?v=download5';
 import {norm,priceKey,matchPrice,priceEntries,quoteKey} from './pricing.js?v=auto4';
 import * as pdfjs from './vendor/pdf.mjs';
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf.worker.mjs', import.meta.url).href;
@@ -7,6 +7,7 @@ const KEY='plant-pricing-library-v1';
 let library=[], rows=[];
 let originalProject=null;
 let initializeLibrary=Promise.resolve();
+let activeDownloadUrl=null;
 function notice(text){$('notice').style.display='block';$('notice').textContent=text;}
 try {library=JSON.parse(localStorage.getItem(KEY)||'[]');if(!Array.isArray(library))throw Error();}
 catch {notice('无法读取浏览器价格库。请检查浏览器存储权限，或用备份文件重新导入。');}
@@ -108,6 +109,7 @@ function refresh(){
  for(const r of library){const tr=document.createElement('tr');for(const k of ['name','spec','unit','price','source'])cell(tr,r[k]);$('library').append(tr);}
 }
 function render(){
+ invalidateDownload();
  $('rows').replaceChildren();$('empty').hidden=rows.length>0;
  rows.forEach((r,i)=>{const tr=document.createElement('tr');
   for(const k of ['name','spec','unit','quantity','price']){const input=document.createElement('input');input.value=r[k]??'';input.setAttribute('aria-label',k);
@@ -134,10 +136,22 @@ async function download(headers,items,filename){
  const book=new ExcelJS.Workbook(),sheet=book.addWorksheet('植物清单');sheet.addRow(headers);
  for(const row of items)sheet.addRow(row.map(v=>String(v??'')));
  sheet.columns.forEach(c=>c.width=24);sheet.views=[{state:'frozen',ySplit:1}];
- const url=URL.createObjectURL(new Blob([await book.xlsx.writeBuffer()],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
- const a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+ saveBlob(new Blob([await book.xlsx.writeBuffer()],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),filename);
 }
-async function run(id,action){const controls=[$('import'),$('quote'),$('export')];controls.forEach(b=>b.disabled=true);notice('正在本机浏览器中处理文件，请稍候……');try{await initializeLibrary;await action();}catch(e){notice('处理失败：'+e.message);}finally{controls.forEach(b=>b.disabled=false);}}
+function exportStatus(text,isError=false){const node=$('export-status');node.textContent=text;node.style.color=isError?'#a12e20':'#276448';node.setAttribute('role',isError?'alert':'status');if(isError)node.scrollIntoView({block:'nearest'});}
+function invalidateDownload(){
+ if(activeDownloadUrl){const old=activeDownloadUrl;activeDownloadUrl=null;setTimeout(()=>URL.revokeObjectURL(old),60000);$('download-ready').hidden=true;$('download-file').removeAttribute('href');exportStatus('清单或设置已更新，请重新导出。');}
+}
+async function run(id,action){
+ const controls=[$('import'),$('quote'),$('export')];controls.forEach(button=>button.disabled=true);
+ const locked=id==='export'?Array.from(document.querySelectorAll('#rows input,#rows select,#rows button,#add,#rematch,#tolerance,#tax-mode,#tax-rate,#discount-mode,#export-mode')).map(node=>({node,disabled:node.disabled})):[];
+ locked.forEach(({node})=>node.disabled=true);
+ if(id==='export'){invalidateDownload();exportStatus('正在生成Excel文件，请稍候……');$('export').textContent='正在生成……';}
+ notice('正在本机浏览器中处理文件，请稍候……');
+ try{await initializeLibrary;await action();}
+ catch(error){const message=error.message||String(error);notice('处理失败：'+message);if(id==='export')exportStatus('导出失败：'+message+'\n匹配结果已保留，可以修正设置后重试。',true);}
+ finally{controls.forEach(button=>button.disabled=false);locked.forEach(({node,disabled})=>node.disabled=disabled);if(id==='export')$('export').textContent='导出 Excel';}
+}
 function selected(id){const file=$(id).files[0];if(!file)throw Error('请先选择文件。');if(file.size>20*1024*1024)throw Error('文件超过20MB，请拆分后上传。');return file;}
 function savePrices(next){localStorage.setItem(KEY,JSON.stringify(next));library=next;refresh();}
 function rematchAfterImport(){rows=rows.map(row=>['人工填写','人工确认库价'].includes(row.status)?row:match(row));render();}
@@ -171,7 +185,20 @@ function financialOptions(){
  if($('tax-mode').value==='add'&&taxRate===null)throw Error('请选择税率后再导出，避免漏计或误加税。');
  return {taxMode:$('tax-mode').value,taxRate,discountMode:$('discount-mode').value};
 }
-function saveBlob(blob,filename){const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+async function askExportConfirmation(message){
+ const panel=$('export-confirm');$('export-confirm-text').textContent=message;panel.hidden=false;panel.scrollIntoView({block:'nearest'});$('export-continue').focus();
+ return new Promise(resolve=>{const finish=value=>{panel.hidden=true;$('export-continue').onclick=null;$('export-cancel').onclick=null;resolve(value);};$('export-continue').onclick=()=>finish(true);$('export-cancel').onclick=()=>finish(false);});
+}
+function saveBlob(blob,filename){
+ invalidateDownload();activeDownloadUrl=URL.createObjectURL(blob);
+ const link=$('download-file');link.href=activeDownloadUrl;link.download=filename;link.textContent='点击下载 Excel · '+filename;
+ $('download-ready').hidden=false;exportStatus('Excel已生成。若未自动下载，请点击下方下载链接。');
+ // The anchor remains attached and its URL remains valid for a manual retry.
+ // Firefox/Safari can ignore detached links or block an async automatic click.
+ link.click();
+}
+window.addEventListener('beforeunload',()=>{if(activeDownloadUrl)URL.revokeObjectURL(activeDownloadUrl);});
+for(const id of ['tax-mode','tax-rate','discount-mode','export-mode'])$(id).addEventListener('change',invalidateDownload);
 async function exportStandard(options){
  const book=new ExcelJS.Workbook(),sheet=book.addWorksheet('植物报价清单');
  sheet.addRow(['植物品种','规格','单位','数量','单价','金额','匹配状态','采用库规格','报价来源','参与报价数','原始平均价']);let subtotal=0;
@@ -185,22 +212,22 @@ async function exportStandard(options){
  sheet.getCell(`A${summaryRow+1}`).value='税率';sheet.getCell(`F${summaryRow+1}`).value=rate/100;sheet.getCell(`F${summaryRow+1}`).numFmt='0.00%';
  sheet.getCell(`A${summaryRow+2}`).value='税额';sheet.getCell(`F${summaryRow+2}`).value={formula:`ROUND(F${summaryRow}*F${summaryRow+1},2)`,result:tax};
  sheet.getCell(`A${summaryRow+3}`).value='合计';sheet.getCell(`F${summaryRow+3}`).value={formula:`F${summaryRow}+F${summaryRow+2}`,result:Math.round((subtotal+tax)*100)/100};
- sheet.getCell(`A${summaryRow+4}`).value='核对说明';sheet.getCell(`B${summaryRow+4}`).value='缺单价或数量的项目金额留空，合计仅包含已定价项目；相近规格须核对。'+(options.taxMode==='included'?'库价已含税，不重复加税。':options.taxRate===null?'未指定税率，未额外计税。':`额外计税${rate}%。`);
+ sheet.getCell(`A${summaryRow+4}`).value='核对说明';sheet.getCell(`B${summaryRow+4}`).value='缺单价或数量的项目金额留空，合计仅包含已定价项目；相近规格须核对。'+(options.taxReview?'原表税费未完整继承，此文件税费待核对。':'')+(options.taxMode==='included'?'库价已含税，不重复加税。':options.taxRate===null?'未指定税率，未额外计税。':`额外计税${rate}%。`);
  const detail=book.addWorksheet('匹配报价依据');detail.addRow(['植物品种','目标规格','候选库名称','候选库规格','候选单价','来源']);
  for(const row of rows)for(const quote of row.matchedQuotes||[])detail.addRow([row.name,row.spec,quote.name,quote.spec,Number(quote.price),quote.source]);
  sheet.columns.forEach(c=>c.width=24);sheet.views=[{state:'frozen',ySplit:1}];book.calcProperties.fullCalcOnLoad=true;
- saveBlob(new Blob([await book.xlsx.writeBuffer()],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),'植物报价清单_含计算.xlsx');
+ saveBlob(new Blob([await book.xlsx.writeBuffer()],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),options.taxReview?'植物报价清单_税费待核对.xlsx':'植物报价清单_含计算.xlsx');
 }
 $('export').onclick=()=>run('export',async()=>{
  if(!rows.length)throw Error('请先生成清单。');
  const options=financialOptions(),incomplete=rows.filter(row=>String(row.price??'').trim()===''||String(row.quantity??'').trim()===''||!Number.isFinite(Number(row.price))||!Number.isFinite(Number(row.quantity)));
- if(incomplete.length&&!window.confirm(`还有 ${incomplete.length} 行缺单价或数量，金额将留空，合计不能视为完整最终报价。是否仍导出待核价文件？`))return;
+ if(incomplete.length&&!await askExportConfirmation(`还有 ${incomplete.length} 行缺单价或数量，金额将留空，合计不能视为完整最终报价。是否仍导出待核价文件？`)){exportStatus('已取消导出。补齐价格/数量后重试，或确认导出待核价文件。');return;}
  if($('export-mode').value==='original'){
   if(!originalProject)throw Error('请先上传XLSX原文件，或选择标准表导出。');
   const result=await fillOriginalXlsx(originalProject.buffer,rows,originalProject.context,options);
   saveBlob(result.blob,originalProject.filename.replace(/\.xlsx$/i,'')+(result.missing?'_待核价':'_已填价')+'.xlsx');
   notice('已在原文件中填价并计算。图片、样式和合并单元格保留，详情见新增“报价计算核对”页。'+(result.warnings.length?'\n需核对：\n'+result.warnings.join('\n'):''));
- }else{if(originalProject&&options.taxMode==='original')throw Error('沿用原表税费请使用原格式导出；标准表模式请明确选择未税加税及税率，或库价已含税。');await exportStandard(options);notice('已导出带金额、税额和合计公式的标准报价表。');}
+ }else{if(originalProject&&options.taxMode==='original'){if(!await askExportConfirmation('标准表不能完整沿用原Excel的税费公式。是否按补充税率（留空则不额外计税）导出税费待核对的标准表？如需保留原公式，请取消并选择原格式导出。')){exportStatus('已取消标准表导出。可切换为原格式，或明确税费口径后重试。');return;}options.taxReview=true;}await exportStandard(options);notice('已导出带金额、税额和合计公式的标准报价表。'+(options.taxReview?'原表税费未自动继承，请核对。':''));}
 });
 $('tolerance').onchange=()=>{rows=rows.map(row=>['人工填写','人工确认库价'].includes(row.status)?row:match(row));render();notice(matchingReport('范围内和相近规格已按新容差重新匹配。'));};
 $('template').onclick=e=>{e.preventDefault();download(['植物品种','规格','单位','单价','数量'],[['桂花','高度200cm 冠幅150cm','株','380','10']],'植物报价模板.xlsx').catch(e=>notice(e.message));};

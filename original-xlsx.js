@@ -14,7 +14,7 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
  const zip=await JSZip.loadAsync(buffer),warnings=[],workbook=xml(await zip.file('xl/workbook.xml').async('string'));
  const relationships=xml(await zip.file('xl/_rels/workbook.xml.rels').async('string'));
  const shared=zip.file('xl/sharedStrings.xml')?nodes(xml(await zip.file('xl/sharedStrings.xml').async('string')),'si').map(si=>nodes(si,'t').map(t=>t.textContent).join('')):[];
- const stylesDoc=xml(await zip.file('xl/styles.xml').async('string'));
+ const stylesDoc=zip.file('xl/styles.xml')?xml(await zip.file('xl/styles.xml').async('string')):xml(`<styleSheet xmlns="${NS}"><cellXfs><xf numFmtId="0"/></cellXfs></styleSheet>`);
  const customFormats=new Map(nodes(stylesDoc,'numFmt').map(node=>[Number(node.getAttribute('numFmtId')),node.getAttribute('formatCode')]));
  const cellFormats=nodes(stylesDoc,'cellXfs')[0]?Array.from(nodes(stylesDoc,'cellXfs')[0].children):[];
  const percentageStyle=cell=>{const format=Number(cellFormats[Number(cell?.getAttribute('s')||0)]?.getAttribute('numFmtId'));return format===9||format===10||/%/.test(customFormats.get(format)||'');};
@@ -22,7 +22,8 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
  for(const sheet of nodes(workbook,'sheet')){
   const id=sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id')||sheet.getAttribute('r:id');
   const relation=nodes(relationships,'Relationship').find(r=>r.getAttribute('Id')===id);
-  const path=new URL(relation.getAttribute('Target'),'https://xlsx/xl/workbook.xml').pathname.slice(1);
+  const path=decodeURIComponent(new URL(relation.getAttribute('Target'),'https://xlsx/xl/workbook.xml').pathname.slice(1));
+  if(!zip.file(path))throw Error('无法定位工作表文件：'+sheet.getAttribute('name'));
   const doc=xml(await zip.file(path).async('string')),cells=new Map(nodes(doc,'c').map(cell=>[cell.getAttribute('r'),cell]));
   books.set(sheet.getAttribute('name'),{doc,path,cells,changed:false});
  }
@@ -106,8 +107,9 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
    const label=financialLabel(r),amountAddress=at('amount',r),cell=book.cells.get(amountAddress),existing=cell?formulaFor(book,cell):null;
    const subtotal=/^(?:本项|分项|项目)?小计/.test(label),total=!subtotal&&/^(?:合计|总计|含税合计|价税合计|项目总价|总报价|含税总价|未税合计|不含税合计)/.test(label),tax=!subtotal&&!total&&/^(?:税额|税金|税费)/.test(label);
    if(subtotal){
-    if(/折后|包干/.test(label)&&!existing&&discountMode==='preserve'){if(number(textValue(cell))===null)throw Error('原表固定折后金额为空，请选择按新行金额求和，或先在Excel明确折后金额。');warnings.push(`${layout.sheet}第${r}行是固定折后/包干小计，保留原金额，需人工核对折扣。`);}
-    else if(pending.length)write(book,amountAddress,null,{formula:existing||sum(pending)});
+    const originalSubtotal=number(textValue(cell));
+    if(/折后|包干/.test(label)&&!existing&&discountMode==='preserve'&&originalSubtotal!==null){warnings.push(`${layout.sheet}第${r}行是固定折后/包干小计，保留原金额，需人工核对折扣。`);}
+    else if(pending.length){write(book,amountAddress,null,{formula:existing||sum(pending)});if(/折后|包干/.test(label)&&!existing)warnings.push(`${layout.sheet}第${r}行已按更新后的行金额求和，未应用固定折扣${originalSubtotal===null?'（原栏位为空）':''}，请核对。`);}
     if(cell||pending.length)components.push(amountAddress);pending=[];continue;
    }
    if(tax){
