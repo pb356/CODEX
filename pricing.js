@@ -1,7 +1,17 @@
 // Price matching is conservative: formatting and explicit unit conversions are
 // equivalent; different dimensions, pots vs plants, and named variants are not.
 export const norm=value=>String(value??'').normalize('NFKC').replace(/\s+/g,'').toLowerCase();
-export function unitKey(value){const unit=norm(value);return ({'棵':'株','平方米':'m2','m²':'m2','㎡':'m2'})[unit]||unit;}
+export function unitKey(value){const unit=norm(value);return ({'棵':'株','平方米':'m2','m²':'m2','㎡':'m2','立方米':'m3','m³':'m3','公斤':'kg','千克':'kg','吨':'t','人天':'工日','人·天':'工日'})[unit]||unit;}
+// Classification applies equally to imported quotes, legacy records, and lists.
+// Services and materials may have no specification; plants still require one.
+export function categoryOf(row){
+ if(/^(other|其他|其它|其他品类|其它品类|材料|人工|费用|服务|配件|非植物)$/.test(norm(row.category)))return 'other';
+ if(/^(plant|植物)$/.test(norm(row.category)))return 'plant';
+ if(/^(运费|运输费|人工|安装费|吊装费|拆除费|养护费|服务费|辅材|发泡胶|防水膜|土工布|陶粒|火山石|树皮|种植土|营养土|花盆$|花箱$)/.test(String(row.name||''))||/(设计费|服务费|安装费|运输费|施工费|养护费|管理费)$/.test(String(row.name||'')))return 'other';
+ if(/^(袋|包|瓶|桶|箱|批|卷|张|kg|g|t|m2|m3|工|工日|人|天|台班|趟|车|项|次|件|套|米|m)$/.test(unitKey(row.unit)))return 'other';
+ return 'plant';
+}
+export function matchingSpec(row){return categoryOf(row)==='other'&&['/','-','—','无','不适用','n/a'].includes(norm(row.spec))?'':String(row.spec||'').trim();}
 export function specKey(value){
  const text=norm(value).replace(/[～~至–—]/g,'-').replace(/(高度|株高|冠幅|冠径|蓬径|蓬幅|胸径|米径|地径)[,;]*(?=\1)/g,'');
  if(!text)return '';
@@ -19,7 +29,7 @@ export function specKey(value){
  // nearest-size price guesses, and no removal of qualifiers such as 约/以上.
  return 'text:'+text.replace(/[，；]/g,match=>match==='，'?',':';');
 }
-export const priceKey=row=>[norm(row.name),specKey(row.spec),unitKey(row.unit)].join('\u0000');
+export const priceKey=row=>[norm(row.name),specKey(matchingSpec(row)),unitKey(row.unit)].join('\u0000');
 export function specificationDistance(requested,quoted){
  const parse=value=>{
   const key=specKey(value);if(!key.startsWith('dimensions:'))return null;
@@ -47,21 +57,23 @@ export function roundAveragePrice(value){
  if(last>=8)return integer-last+10;
  return integer;
 }
-export const quoteKey=row=>JSON.stringify([priceKey(row),String(Number(row.price)),row.sourceId||row.source||'',row.billingPeriod||'']);
+export const quoteKey=row=>JSON.stringify([priceKey(row),String(Number(row.price)),row.sourceId||row.source||'',row.billingPeriod||'',categoryOf(row),row.billingPeriod?(row.chargeType|| (row.billingPeriod==='once'?'once':'recurring')):'']);
 export function matchPrice(row,library,{tolerance=0.1}={}){
  const result={...row,price:'',source:'',matchedSpec:'',matchedName:'',matchedQuotes:[],quoteCount:0,averagePrice:null,candidates:[]};
  if(!library.length){result.status='价格库为空，请先导入报价';return result;}
- const named=library.filter(item=>norm(item.name)===norm(row.name));
- const candidates=named.length?named:library.filter(item=>norm(item.name.replace(/[A-Za-z0-9]+$/,''))===norm(row.name));
+ const category=categoryOf(row),scoped=library.filter(item=>categoryOf(item)===category);
+ const named=scoped.filter(item=>norm(item.name)===norm(row.name));
+ const candidates=named.length?named:category==='plant'?scoped.filter(item=>norm(item.name.replace(/[A-Za-z0-9]+$/,''))===norm(row.name)):[];
  result.candidates=candidates;
- if(!candidates.length){result.status='价格库无此品种';return result;}
- if(!String(row.spec??'').trim()){result.status='规格缺失，暂不能判断适用报价';return result;}
+ if(!candidates.length){result.status='价格库无此项目';return result;}
+ const requested=matchingSpec(row);
+ if(!requested&&category==='plant'){result.status='规格缺失，暂不能判断适用报价';return result;}
  const eligible=candidates.filter(item=>!row.unit||unitKey(item.unit)===unitKey(row.unit));
  // All appropriate quotations participate, across source files and tiers.
  // Importing the same quotation twice must not give it extra weight.
  const accepted=new Map();
  for(const item of eligible){
-  const exact=specKey(item.spec)===specKey(row.spec),distance=specificationDistance(row.spec,item.spec);
+  const quoted=matchingSpec(item),exact=specKey(quoted)===specKey(requested),distance=requested&&quoted?specificationDistance(requested,quoted):null;
   if(exact||distance&&(distance.contained||distance.score<=tolerance+1e-9))accepted.set(quoteKey(item),{...item,matchKind:exact?'完全匹配':distance.contained?'范围内':'相近规格'});
  }
  const quotes=[...accepted.values()];
@@ -77,9 +89,11 @@ export function priceEntries(items,source,sourceId=''){
  const entries=new Map(),errors=[];
  for(const item of items){
   const text=String(item.price??'').replace(/[,￥¥]/g,'').trim();
-  if(!item.spec||!item.unit||!/^\d+(\.\d+)?$/.test(text)||!Number.isFinite(Number(text))){errors.push(`第${item.line??'?'}行：规格、单位缺失或单价不是非负数字`);continue;}
-  const entry={name:item.name,spec:item.spec,unit:item.unit,price:String(Number(text)),source:item.source||source,sourceId:/^[a-f0-9]{64}$/i.test(item.sourceId||'')?item.sourceId.toLowerCase():item.source?'':sourceId,...(item.billingPeriod?{billingPeriod:item.billingPeriod}:{}),...(item.business?{business:item.business}:{})},key=quoteKey(entry);
-  entries.set(key,entry);
+  const category=categoryOf(item);
+  if(!String(item.name||'').trim()||!item.unit||(category==='plant'&&!String(item.spec||'').trim())||!/^\d+(\.\d+)?$/.test(text)||!Number.isFinite(Number(text))){errors.push(`第${item.line??'?'}行：名称、单位或植物规格缺失，或单价不是非负数字`);continue;}
+  const chargeType=item.chargeType||(category==='other'?'once':'recurring');
+  const entry={name:item.name,spec:item.spec||'',unit:item.unit,price:String(Number(text)),category,chargeType,notes:item.notes||'',source:item.source||source,sourceId:/^[a-f0-9]{64}$/i.test(item.sourceId||'')?item.sourceId.toLowerCase():item.source?'':sourceId,...(item.billingPeriod?{billingPeriod:chargeType==='once'?'once':item.billingPeriod}:{}),...(item.business?{business:item.business}:{}),_locations:item._origin?[item._origin]:item._locations||[]},key=quoteKey(entry);
+  const previous=entries.get(key);if(previous)entry._locations=[...previous._locations,...entry._locations];entries.set(key,entry);
  }
  return {entries,errors};
 }

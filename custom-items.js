@@ -1,5 +1,5 @@
-import {norm,specKey,unitKey} from './pricing.js?v=preview7';
-export function itemSpec(row){return row.category==='other'&&['/','-','无','不适用','n/a'].includes(norm(row.spec))?'':row.spec||'';}
+import {norm,specKey,unitKey,matchingSpec} from './pricing.js?v=catalog9';
+export const itemSpec=matchingSpec;
 export function customKey(row){return JSON.stringify([norm(row.name),specKey(itemSpec(row)),unitKey(row.unit),row.category||'plant',row.billingPeriod||'',(row.business==='indoor'||row.billingPeriod)?row.chargeType||'':'']);}
 export function validateCustom(row){
  if(!String(row.name||'').trim()||/^未命名项目/.test(row.name))throw Error('请先填写实际项目名称。');

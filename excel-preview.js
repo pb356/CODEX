@@ -12,7 +12,7 @@ const plain=value=>value===null||value===undefined?'':typeof value==='object'?(v
 const pixels=width=>width<1?Math.floor(width*12+.5):Math.floor(width*7+5);
 const borderWidths={hair:.5,thin:1,medium:2,thick:3,double:3,dotted:1,dashed:1,mediumDashed:2,dashDot:1,mediumDashDot:2,dashDotDot:1,mediumDashDotDot:2,slantDashDot:2};
 
-export async function createExcelPreview(host,buffer,{onEdit,onAdd,actionState,context={}}={}){
+export async function createExcelPreview(host,buffer,{onEdit,onAdd,actionState,context={},showActions=true}={}){
  const zip=await JSZip.loadAsync(buffer),workbook=new ExcelJS.Workbook();await workbook.xlsx.load(buffer);
  // Only supply columns that genuinely do not exist in the source, using the
  // same positions as original-format export and copying the neighbouring style.
@@ -57,7 +57,7 @@ export async function createExcelPreview(host,buffer,{onEdit,onAdd,actionState,c
   const countCols=Math.max(sheet.columnCount,1),countRows=Math.max(sheet.rowCount,1),xs=[0],ys=[0];if(countCols*countRows>150000)throw Error('原表范围过大，请先在Excel中删除多余空白行列后重新导入。');
   for(let c=1;c<=countCols;c++){const raw=rawCols.find(n=>Number(n.getAttribute('min'))<=c&&Number(n.getAttribute('max'))>=c);xs.push(xs.at(-1)+(sheet.getColumn(c).hidden?0:pixels(Number(raw?.getAttribute('width')||sheet.getColumn(c).width||sheet.properties.defaultColWidth||8.43))));}
   for(let r=1;r<=countRows;r++){const raw=rawRows.get(r);ys.push(ys.at(-1)+(sheet.getRow(r).hidden?0:Number(raw?.getAttribute('ht')||defaultRow)*96/72));}
-  const canvas=el('div','excel-canvas');canvas.dataset.sheet=sheet.name;canvas.style.width=xs.at(-1)+176+'px';canvas.style.height=ys.at(-1)+'px';canvas.style.setProperty('--sheet-width',xs.at(-1)+'px');
+  const canvas=el('div','excel-canvas');canvas.dataset.sheet=sheet.name;canvas.style.width=xs.at(-1)+(showActions?176:0)+'px';canvas.style.height=ys.at(-1)+'px';canvas.style.setProperty('--sheet-width',xs.at(-1)+'px');
   const cells=new Map(),buttons=new Map(),merged=new Map(),covered=new Set();
   for(const range of sheet.model.merges||[]){const [a,b=a]=range.split(':'),c1=colNumber(a),r1=Number(a.match(/\d+/)[0]),c2=colNumber(b),r2=Number(b.match(/\d+/)[0]);merged.set(a,{c2,r2});for(let r=r1;r<=r2;r++)for(let c=c1;c<=c2;c++)if(r!==r1||c!==c1)covered.add(colName(c)+r);}
   for(let r=1;r<=countRows;r++)for(let c=1;c<=countCols;c++){
@@ -105,7 +105,7 @@ export async function createExcelPreview(host,buffer,{onEdit,onAdd,actionState,c
   if(disposed)return;
   for(const [name,state]of sheets){
    const values=cellValues[name]||{};for(const [address,view]of state.cells)view.display(Object.hasOwn(values,address)?values[address]:view.sourceValue);
-   const wanted=new Set();for(const row of rows.filter(r=>r._origin?.sheet===name)){
+   const wanted=new Set();for(const row of (showActions?rows:[]).filter(r=>r._origin?.sheet===name)){
     const number=row._origin.row;wanted.add(number);const priceColumn=row._origin.columns.price;if(priceColumn!==undefined){const view=state.cells.get(colName(priceColumn+1)+number);if(view)view.input.title=[row.status,row.source,row.quoteCount>1?row.quoteCount+'条报价，平均'+row.averagePrice+'元':'',row.matchedSpec?'采用规格：'+row.matchedSpec:''].filter(Boolean).join('；');}let button=state.buttons.get(number);if(!button){button=el('button','excel-bank secondary');button.style.left=state.actionX+10+'px';button.style.top=(state.ys[number-1]||0)+2+'px';button.style.height=Math.max(16,Math.min(28,state.ys[number]-state.ys[number-1]-4))+'px';button.dataset.row=number;button.dataset.sheet=name;state.canvas.append(button);state.buttons.set(number,button);}
     const action=actionState?.(row)||{};button.textContent=action.label||'一键加入新品库';button.disabled=!!action.disabled;button.title=action.title||row.name;button.onclick=()=>onAdd?.(row);
    }
