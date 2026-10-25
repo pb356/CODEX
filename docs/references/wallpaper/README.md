@@ -1,58 +1,63 @@
-# 热植壁纸参考图（待确认）
+# 热植壁纸：海报与平面设计参考（第二版，待确认）
 
-以下 8 张真实植物摄影仅用于确认植物形态、材质、层次与配色，不是正式壁纸，不代表已完成构图。Behance 与 Pinterest 当前检索返回 HTTP 403，先采用可核验作者和许可的 Wikimedia Commons 摄影，并保留原站检索入口。
+已按你的反馈撤回上一组实拍参考。本版只看经过设计的植物拼贴、插画与平面构图，不用原始植物照片替代设计。
 
-默认构图方向：植物在左侧、左下和底部自然舒展；右侧 40% 为安静办公区，摆动范围也不进入核心留白。确认植物质感后再制作静态构图，再确认运动预览。
+## 三个方向
 
-- [Behance 检索](https://www.behance.net/search/projects?search=Anthurium%20Monstera%20botanical%20wallpaper)
-- [Pinterest 检索](https://www.pinterest.com/search/pins/?q=botanical%20wallpaper%20anthurium%20monstera)
+- **A · 精修植物拼贴：01、02、08。** 保留叶片材质与层次，用构图、留白和统一光线形成平面海报。
+- **B · 低饱和植物插画：03、04、05。** 植物经过绘制与印刷处理，画面更柔和。
+- **C · 现代平面图形：06、07。** 图形化程度较高，强调线条、色块和留白。
 
-参考图中的拍摄背景、盆器与标签不作为正式场景内容。正式素材另行制作分层资产与授权记录，不将网站截图或这些完整照片直接塞入安装包。
+默认仍是左侧、左下和底部组团，右侧约 40% 安静办公区；不会将满版图案直接作为壁纸。参考只用于确认设计方向，不使用其品牌、文字、水印或原图作为正式素材。以下图片为发布方公开预览的外部链接，作品权利属于原作者；正式素材将单独原创制作或核实许可。
 
-## 01 · 水晶花烛：心形叶片、叶脉与柔和质感
+## 01 · 精修植物拼贴：层次、深绿与完整叶片；只参考质感，不采用满版密度
 
-![水晶花烛：心形叶片、叶脉与柔和质感](01.jpg)
+![精修植物拼贴：层次、深绿与完整叶片；只参考质感，不采用满版密度](https://images.rawpixel.com/image_800/cHJpdmF0ZS9sci9pbWFnZXMvd2Vic2l0ZS8yMDIyLTA1L3JtMTkxLW51bm9vbi0xOC5qcGc.jpg)
 
-[作品与原图页面](https://commons.wikimedia.org/wiki/File:Anthurium_crystallinum_leaf.JPG) · 作者：Pajast · 许可：Public domain
+[查看原作品页面](https://www.rawpixel.com/image/2294549/free-illustration-image-tropical-monstera-summer)
 
-## 02 · 水晶花烛：绒面叶与低饱和深绿
+## 02 · 植物边角构图：留白、纸面与细腻叶形
 
-![水晶花烛：绒面叶与低饱和深绿](02.jpg)
+![植物边角构图：留白、纸面与细腻叶形](https://images.rawpixel.com/image_800/czNmcy1wcml2YXRlL3Jhd3BpeGVsX2ltYWdlcy93ZWJzaXRlX2NvbnRlbnQvbHIvcm0yNTUtc2FzaS0wNl8xLmpwZw.jpg)
 
-[作品与原图页面](https://commons.wikimedia.org/wiki/File:Anthurium_crystallinum-leaf.jpg) · 作者：Abrimaal at Polish Wikipedia · 许可：CC BY-SA 2.5
+[查看原作品页面](https://www.rawpixel.com/image/2585357/free-illustration-psd-leaf-green-background)
 
-## 03 · 龟背竹：真实裂叶与自然比例
+## 03 · 低饱和植物印刷：灰绿与暖灰的克制配色
 
-![龟背竹：真实裂叶与自然比例](03.jpg)
+![低饱和植物印刷：灰绿与暖灰的克制配色](https://images.rawpixel.com/image_800/cHJpdmF0ZS9sci9pbWFnZXMvd2Vic2l0ZS8yMDIyLTA1L3JtMTc1LW5vb24tMDNiLmpwZw.jpg)
 
-[作品与原图页面](https://commons.wikimedia.org/wiki/File:Monstera_deliciosa_DSC02605.jpg) · 作者：Smatu · 许可：CC BY-SA 4.0
+[查看原作品页面](https://www.rawpixel.com/image/2097042/beige-botanical-banner)
 
-## 04 · 洞洞龟背竹：孔洞与层叠遮挡
+## 04 · 植物插画：清楚叶脉、自然弧线与轻盈层叠
 
-![洞洞龟背竹：孔洞与层叠遮挡](04.jpg)
+![植物插画：清楚叶脉、自然弧线与轻盈层叠](https://images.rawpixel.com/image_800/czNmcy1wcml2YXRlL3Jhd3BpeGVsX2ltYWdlcy93ZWJzaXRlX2NvbnRlbnQvbHIvcGRmbG93ZXJzZXQxNy10YW5nLTA0XzEuanBn.jpg)
 
-[作品与原图页面](https://commons.wikimedia.org/wiki/File:Monstera_adansonii_1zz.jpg) · 作者：Photo by David J. Stang · 许可：CC BY-SA 4.0
+[查看原作品页面](https://www.rawpixel.com/image/594229/tropical-leaves-background)
 
-## 05 · 芭蕉：舒展大叶与柔和叶缘
+## 05 · 深色植物插画：平面装饰层次；只参考笔触，不采用满版密度
 
-![芭蕉：舒展大叶与柔和叶缘](05.jpg)
+![深色植物插画：平面装饰层次；只参考笔触，不采用满版密度](https://images.rawpixel.com/image_800/cHJpdmF0ZS9sci9pbWFnZXMvd2Vic2l0ZS8yMDIzLTAzL3JtNTc5LWJhY2tncm91bmQtZi0zOS5qcGc.jpg)
 
-[作品与原图页面](https://commons.wikimedia.org/wiki/File:Musa_acuminata_3zz.jpg) · 作者：Photo by David J. Stang · 许可：CC BY-SA 4.0
+[查看原作品页面](https://www.rawpixel.com/image/8700194/tropical-jungle-background-dark-green-design)
 
-## 06 · 芭蕉群落：叶片高低与自然组团
+## 06 · 现代平面图形：叶片图形与线稿组合
 
-![芭蕉群落：叶片高低与自然组团](06.jpg)
+![现代平面图形：叶片图形与线稿组合](https://images.rawpixel.com/image_800/czNmcy1wcml2YXRlL3Jhd3BpeGVsX2ltYWdlcy93ZWJzaXRlX2NvbnRlbnQvbHIvdjk5Mi1hdW0tYmFja2dyb3VuZC0wMi1rcnZzenNwZi5qcGc.jpg)
 
-[作品与原图页面](https://commons.wikimedia.org/wiki/File:Musa_basjoo_13zz.jpg) · 作者：Photo by David J. Stang · 许可：CC BY-SA 4.0
+[查看原作品页面](https://www.rawpixel.com/image/3853990/illustration-vector-background-tropical-green)
 
-## 07 · 其他观叶植物：灰绿、心形叶和细节
+## 07 · 平面海报：底部组团与大面积留白；正式版降低饱和度
 
-![其他观叶植物：灰绿、心形叶和细节](07.jpg)
+![平面海报：底部组团与大面积留白；正式版降低饱和度](https://images.rawpixel.com/image_800/czNmcy1wcml2YXRlL3Jhd3BpeGVsX2ltYWdlcy93ZWJzaXRlX2NvbnRlbnQvbHIvdjQ4OS1hdW0tMDItYS1zdW1tZXJ0cm9waWNhbF8zLmpwZw.jpg)
 
-[作品与原图页面](https://commons.wikimedia.org/wiki/File:Philodendron_gloriosum_leaves_-_closeup.jpg) · 作者：Theoperatingsystem · 许可：CC BY-SA 4.0
+[查看原作品页面](https://www.rawpixel.com/image/679880/tropical-design-space)
 
-## 08 · 深绿叶面的柔和光线与背景虚化
+## 08 · 植物拼贴海报：柔和投影、材质和边角留白
 
-![深绿叶面的柔和光线与背景虚化](08.jpg)
+![植物拼贴海报：柔和投影、材质和边角留白](https://images.rawpixel.com/image_800/czNmcy1wcml2YXRlL3Jhd3BpeGVsX2ltYWdlcy93ZWJzaXRlX2NvbnRlbnQvbHIvcC1zODMtcGFpLTcwMDMtY2FyZC0wMWEuanBn.jpg)
 
-[作品与原图页面](https://commons.wikimedia.org/wiki/File:Foliage_patterns_Tropical_Dome_Brisbane_Botanic_Gardens_Mt_Coot-tha_L1020717.jpg) · 作者：John Robert McPherson · 许可：CC BY-SA 4.0
+[查看原作品页面](https://www.rawpixel.com/image/2750281/free-illustration-psd-background-summer-wallpaper)
+
+## 下一步
+
+请选择 A、B、C，或指出最喜欢的编号。方向确认后，先制作一张静态构图供评审，之后再制作分层素材与短运动预览。原图中的布局只作参考，不照搬。
