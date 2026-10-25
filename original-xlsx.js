@@ -72,14 +72,19 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
   let replacedRentalFormula=false;
   for(const row of active){
    const origin=row._origin,r=origin.row;
-   for(const field of ['name','spec','unit','quantity'])if(columns[field]!==undefined&&String(row[field]??'')!==String(origin.original[field]??''))write(book,at(field,r),field==='quantity'?(number(row[field])??''):row[field]);
-   const price=number(row.price),quantity=number(row.quantity),duration=rental?rentDuration(row,rental.duration):1;
-   if(rental)write(book,at('duration',r),duration);
+   for(const field of ['name','spec','unit','quantity','notes','category','chargeType','billingPeriod'])if(columns[field]!==undefined&&String(row[field]??'')!==String(origin.original[field]??''))write(book,field==='name'?columnName((origin.nameColumn??columns.name)+1)+r:at(field,r),field==='quantity'?(number(row[field])??''):field==='category'?(row[field]==='other'?'其他品类':'植物'):field==='chargeType'?(row[field]==='once'?'一次性':'按周期'):field==='billingPeriod'?(PERIODS[row[field]]||row[field]):row[field]);
+   if(origin.nameColumn!==columns.name&&origin.nameColumn===columns.notes&&(row.name!==origin.original.name||row.notes!==origin.original.notes))write(book,columnName(origin.nameColumn+1)+r,[row.name,row.notes].filter((value,index,array)=>value&&array.indexOf(value)===index).join('；'));
+   for(const field of row._extras||[])if(field.dirty)write(book,columnName(field.column+1)+r,field.value);
+   const price=number(row.price),quantity=number(row.quantity),duration=rental&&row.chargeType!=='once'?rentDuration(row,rental.duration):1;
+   if(rental)write(book,at('duration',r),row.chargeType==='once'?'':duration);
    if(rental&&row.isGift){write(book,at('price',r),price??0,{style:styles});write(book,at('amount',r),0,{style:book.cells.get(at('amount',r))?.getAttribute('s')||styles});continue;}
+   if(String(row.amountOverride??'').trim()!==''&&number(row.amountOverride)===null)throw Error(`${layout.sheet}第${r}行手动金额无效，请修正。`);
+   if(String(row.amountOverride??'').trim()!==''&&number(row.amountOverride)!==null){write(book,at('price',r),price??'',{style:styles});write(book,at('amount',r),number(row.amountOverride),{style:book.cells.get(at('amount',r))?.getAttribute('s')||styles});continue;}
+   if((price===null||quantity===null)&&origin.amountFormula&&book.cells.get(at('amount',r))&&child(book.cells.get(at('amount',r)),'f')){if(price!==null)write(book,at('price',r),price,{style:styles});continue;}
    if(price===null||quantity===null){missing++;write(book,at('price',r),price??'',{style:styles});write(book,at('amount',r),'');continue;}
    write(book,at('price',r),price,{style:styles});
    const old=book.cells.get(at('amount',r)),f=old?formulaFor(book,old):null;
-   const rentalFormula=rental?(columns.quantity!==undefined?`ROUND(${at('quantity',r)}*${at('price',r)}*${at('duration',r)},2)`:String(money(price*quantity*duration))):null;
+   const rentalFormula=rental?(columns.quantity!==undefined?`ROUND(${at('quantity',r)}*${at('price',r)}${row.chargeType==='once'?'':'*'+at('duration',r)},2)`:String(money(price*quantity*duration))):null;
    if(rental&&f&&f!==rentalFormula)replacedRentalFormula=true;
    write(book,at('amount',r),money(price*quantity*duration),{formula:rentalFormula||f||(columns.quantity!==undefined?`ROUND(${at('quantity',r)}*${at('price',r)},2)`:String(money(price*quantity))),style:old?.getAttribute('s')||styles});
   }
@@ -175,9 +180,9 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
   book.changed=true;
  }
  if(unsupported.size)warnings.push(`${unsupported.size} 个复杂/共享公式已保留并清除旧缓存，需在Excel打开时自动重算。`);
- let grand=0;for(const summary of summaries){try{summary.total=money(Number(read(summary.sheet,summary.address)));grand+=summary.total;}catch{summary.total='打开Excel后重算';}}
- const audit=[['报价计算与核对','说明'],['计价状态',missing?`不完整：${missing}行缺单价或数量，总价仅供核对`:'本次植物行均已填写单价与数量'],...(rental?[['租赁计价口径','数量×每'+PERIODS[rental.period]+'单价×租期；默认租期'+rental.duration+PERIODS[rental.period]+'，逐行租期优先']]:[]),['原表固定折后价处理',discountMode==='preserve'?'沿用原固定价，出现时须人工核对':'按更新行金额求和，不应用原固定折扣'],['税费口径',taxMode==='original'?'沿用原表税费，不重复加税':taxMode==='included'?'库价已含税，不额外加税':`未税价加税，税率${taxRate}%`],...summaries.flatMap(s=>[[s.sheet+'合计',s.total],[s.sheet+'新增税率',s.extraRate?(s.extraRate*100)+'%':'未额外加税']]),['各清单合计汇总（非跨表去重）',money(grand)],...warnings.map(w=>['需核对',w]),[],['植物品种','目标规格','数量','最终单价','采用库规格','匹配方式','报价来源','参与报价数','原始平均价']];
- for(const row of rows)audit.push([row.name,row.spec,row.quantity,row.price,(row.matchedName||'')+' '+(row.matchedSpec||''),row.status,row.source,row.quoteCount||0,row.averagePrice??'']);
+ let grand=0;for(const summary of summaries){try{const value=Number(read(summary.sheet,summary.address));if(!Number.isFinite(value))throw Error('合计不是数值');summary.total=money(value);grand+=summary.total;}catch{summary.total='打开Excel后重算';warnings.push(`${summary.sheet}合计尚不能确定，请在Excel打开重算后核对。`);}}
+ const audit=[['报价计算与核对','说明'],['计价状态',missing?`不完整：${missing}行缺单价或数量，总价仅供核对`:'本次植物行均已填写单价与数量'],...(rental?[['租赁计价口径','数量×每'+PERIODS[rental.period]+'单价×租期；默认租期'+rental.duration+PERIODS[rental.period]+'，逐行租期优先']]:[]),['原表固定折后价处理',discountMode==='preserve'?'沿用原固定价，出现时须人工核对':'按更新行金额求和，不应用原固定折扣'],['税费口径',taxMode==='original'?'沿用原表税费，不重复加税':taxMode==='included'?'库价已含税，不额外加税':`未税价加税，税率${taxRate}%`],...summaries.flatMap(s=>[[s.sheet+'合计',s.total],[s.sheet+'新增税率',s.extraRate?(s.extraRate*100)+'%':'未额外加税']]),['各清单合计汇总（非跨表去重）',money(grand)],...warnings.map(w=>['需核对',w]),[],['植物品种','目标规格','数量','最终单价','采用库规格','匹配方式','报价来源','参与报价数','原始平均价','备注','项目类别','计费方式','手动或原行固定金额']];
+ for(const row of rows)audit.push([row.name,row.spec,row.quantity,row.price,(row.matchedName||'')+' '+(row.matchedSpec||''),row.status,row.source,row.quoteCount||0,row.averagePrice??'',row.notes||'',row.category||'plant',row.chargeType||'',row.amountOverride??'']);
  audit.push([],['匹配报价明细','目标规格','库中名称','库中规格','库中单价','来源']);for(const row of rows)for(const quote of row.matchedQuotes||[])audit.push([row.name,row.spec,quote.name,quote.spec,Number(quote.price),quote.source]);
  const auditName=(()=>{let name='报价计算核对',i=1;while(books.has(name))name='报价计算核对'+i++;return name;})();
  const id=Math.max(0,...nodes(workbook,'sheet').map(s=>Number(s.getAttribute('sheetId'))))+1,relId='rIdPlantQuote'+id,path=`xl/worksheets/plant-quote-${id}.xml`;
@@ -191,5 +196,6 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
  let calc=nodes(workbook,'calcPr')[0];if(!calc){calc=make(workbook,'calcPr');const after=Array.from(workbook.documentElement.children).find(node=>['oleSize','customWorkbookViews','pivotCaches','smartTagPr','smartTagTypes','webPublishing','fileRecoveryPr','webPublishObjects','extLst'].includes(node.localName));workbook.documentElement.insertBefore(calc,after||null);}calc.setAttribute('calcMode','auto');calc.setAttribute('fullCalcOnLoad','1');calc.setAttribute('forceFullCalc','1');
  for(const book of books.values())if(book.changed)zip.file(book.path,serialize(book.doc));
  zip.file('xl/workbook.xml',serialize(workbook));zip.file('xl/_rels/workbook.xml.rels',serialize(relationships));zip.file('[Content_Types].xml',serialize(contentTypes));
- return {blob:await zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),warnings,missing,grand:money(grand)};
+ const lines=rows.map(row=>{const layout=context.layouts.find(layout=>layout.sheet===row._origin.sheet);let amount=null;const book=books.get(row._origin.sheet);let column=layout.columns.amount;if(column===undefined){const header=nodes(book.doc,'row').find(node=>Number(node.getAttribute('r'))===layout.headerRow);const cell=header&&Array.from(header.children).find(cell=>textValue(cell)==='金额');if(cell)column=columnNumber(cell.getAttribute('r'))-1;}try{if(column!==undefined){const value=read(row._origin.sheet,columnName(column+1)+row._origin.row);amount=value===''||!Number.isFinite(Number(value))?null:Number(value);}}catch{}return {sheet:row._origin.sheet,row:row._origin.row,amount};});
+ return {lines,blob:await zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),warnings,missing,grand:money(grand)};
 }

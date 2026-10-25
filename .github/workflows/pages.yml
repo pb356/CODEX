@@ -34,7 +34,7 @@ jobs:
           python - <<'PY'
           import os, time, urllib.request
           root = os.environ['SITE_URL'].rstrip('/') + '/'
-          checks = [('', 'mode-indoor'), ('workspaces.js?v=20261025-dual6', 'switchMode'), ('workspace.html?mode=indoor&v=dual6', 'rental-settings'), ('workspace.html?mode=outdoor&v=dual6', 'download-ready'), ('app.js?v=20261025-dual6', 'plant-pricing-rental-library-v1'), ('pricing.js?v=dual6', 'roundAveragePrice'), ('original-xlsx.js?v=dual6', 'rental'), ('rental.js?v=dual6', 'rentDuration'), ('vendor/pdf.mjs', 'pdfjsVersion')]
+          checks = [('', 'mode-indoor'), ('workspaces.js?v=20261025-preview7', 'switchMode'), ('workspace.html?mode=indoor&v=preview7', 'custom-library'), ('workspace.html?mode=outdoor&v=preview7', 'preview-totals'), ('app.js?v=20261025-preview7', 'upsertCustomRows'), ('custom-items.js?v=preview7', 'lineAmount'), ('pricing.js?v=preview7', 'roundAveragePrice'), ('original-xlsx.js?v=preview7', 'amountOverride'), ('rental.js?v=dual6', 'rentDuration'), ('vendor/pdf.mjs', 'pdfjsVersion')]
           for path, marker in checks:
               for attempt in range(10):
                   try:
