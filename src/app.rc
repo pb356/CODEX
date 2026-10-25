@@ -1,0 +1,26 @@
+#pragma code_page(65001)
+#include <windows.h>
+1 RT_MANIFEST "app.manifest"
+1 VERSIONINFO
+ FILEVERSION 0,1,0,0
+ PRODUCTVERSION 0,1,0,0
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEFLAGS 0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+BEGIN
+ BLOCK "StringFileInfo"
+ BEGIN
+  BLOCK "080404B0"
+  BEGIN
+   VALUE "FileDescription", "桌面归纳盒（待实机验收预览版）\0"
+   VALUE "ProductName", "桌面归纳盒\0"
+   VALUE "FileVersion", "0.1.0\0"
+   VALUE "OriginalFilename", "DesktopBoxes.exe\0"
+  END
+ END
+ BLOCK "VarFileInfo"
+ BEGIN
+  VALUE "Translation", 0x0804, 1200
+ END
+END
