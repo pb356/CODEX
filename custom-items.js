@@ -1,4 +1,4 @@
-import {norm,specKey,unitKey,matchingSpec} from './pricing.js?v=catalog9';
+import {norm,specKey,unitKey,matchingSpec} from './pricing.js?v=flex10';
 export const itemSpec=matchingSpec;
 export function customKey(row){return JSON.stringify([norm(row.name),specKey(itemSpec(row)),unitKey(row.unit),row.category||'plant',row.billingPeriod||'',(row.business==='indoor'||row.billingPeriod)?row.chargeType||'':'']);}
 export function validateCustom(row){

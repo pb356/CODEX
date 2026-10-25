@@ -1,9 +1,9 @@
-import {initPriceLibraryEditor} from './price-library-editor.js?v=catalog9';
-import {createExcelPreview} from './excel-preview.js?v=catalog9';
-import {customKey,itemSpec,validateCustom,lineAmount} from './custom-items.js?v=catalog9';
+import {initPriceLibraryEditor} from './price-library-editor.js?v=flex10';
+import {createExcelPreview} from './excel-preview.js?v=flex10';
+import {customKey,itemSpec,validateCustom,lineAmount} from './custom-items.js?v=flex10';
 import {PERIODS,periodFromText,rentalUnit,rentDuration} from './rental.js?v=dual6';
-import {fillOriginalXlsx} from './original-xlsx.js?v=catalog9';
-import {norm,specKey,unitKey,priceKey,matchPrice,priceEntries,quoteKey,categoryOf} from './pricing.js?v=catalog9';
+import {fillOriginalXlsx} from './original-xlsx.js?v=flex10';
+import {norm,specKey,unitKey,priceKey,matchPrice,priceEntries,quoteKey,categoryOf} from './pricing.js?v=flex10';
 import * as pdfjs from './vendor/pdf.mjs';
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf.worker.mjs', import.meta.url).href;
 const $ = id => document.getElementById(id);
@@ -24,7 +24,7 @@ let activeDownloadUrl=null;
 function notice(text){$('notice').style.display='block';$('notice').textContent=text;}
 try {library=JSON.parse(localStorage.getItem(KEY)||'[]');if(!Array.isArray(library))throw Error();library=library.map(normalizeStoredQuote);}
 catch {notice('无法读取浏览器价格库。请检查浏览器存储权限，或用备份文件重新导入。');}
-const aliases={name:['植物品种','植物名称','品种','名称','苗木名称','苗木品种','品类','项目名称','项目','品项','项目内容','工作内容','费用名称','品名','材料名称'],spec:['规格','植物规格','苗木规格','规格cm','规格(cm)'],unit:['单位','计量单位'],price:['单价','价格','综合单价','单价(元)','含税单价','不含税单价','单价(元/株)','单价(元/棵)','月租金','月租单价','月租金单价','租金(元/月)','月单价','日租金','日租单价','年租金','年租单价','租赁单价','租赁价格','元/月','元/天','元/日','元/年','租金/月'],quantity:['数量','工程量'],amount:['金额','总价','合价','金额(元)','合计金额','总价(元)','合计(元)'],source:['报价来源','来源文件'],sourceId:['报价文件标识'],business:['报价工作区'],libraryType:['价格库类型'],category:['项目类别','类别','分类'],chargeType:['计费方式','收费方式'],billingPeriod:['计租周期'],notes:['备注','说明','计费说明'],duration:['租期','租赁月数','租期(月)','租赁天数','租期(天)','租期(日)','租赁年数','租期(年)','租赁周期数']};
+const aliases={name:['植物品种','植物名称','品种','名称','苗木名称','苗木品种','品类','项目名称','项目','品项','项目内容','工作内容','费用名称','品名','材料名称'],spec:['规格','植物规格','苗木规格','规格cm','规格(cm)','规格mm','规格(mm)','尺寸','尺寸cm','尺寸mm'],unit:['单位','计量单位'],price:['单价','价格','综合单价','单价(元)','含税单价','不含税单价','单价(元/株)','单价(元/棵)','月租金','月租单价','月租金单价','租金(元/月)','月单价','日租金','日租单价','年租金','年租单价','租赁单价','租赁价格','元/月','元/天','元/日','元/年','租金/月'],quantity:['数量','工程量'],amount:['金额','总价','合价','金额(元)','合计金额','总价(元)','合计(元)'],source:['报价来源','来源文件'],sourceId:['报价文件标识'],business:['报价工作区'],libraryType:['价格库类型'],category:['项目类别','类别','分类'],chargeType:['计费方式','收费方式'],billingPeriod:['计租周期'],notes:['备注','说明','计费说明'],duration:['租期','租赁月数','租期(月)','租赁天数','租期(天)','租期(日)','租赁年数','租期(年)','租赁周期数']};
 const vocabulary='银合欢 侧柏 珍珠狗牙花 蓝星花 肾蕨 迷迭香 澳洲米花 女贞 油橄榄 蒲葵 花叶十万错 银毛野牡丹 银叶仓鼠 滴水观音 鹤望兰 花叶长春蔓 狐尾天门冬 菲油果 棕竹 琴叶榕 富贵蕨 发财树 幸福树 散尾葵 绿萝 大叶绿萝 绿萝柱 金钱树 富贵竹 白掌 红掌 巴西木 龙血树 橡皮树 也门铁 富贵椰子 夏威夷椰子 竹芋 吊兰 虎皮兰 黄杨球 女贞球 天冬 大红花 桂花 芭蕉 旅人蕉 龟背竹 霸王蕨'.split(' ');
 function csvParse(text){
  const result=[];let row=[],value='',quoted=false;
@@ -38,6 +38,35 @@ function csvParse(text){
  if(value||row.length){row.push(value);result.push(row);}return result;
 }
 function cellValue(v){if(v===null||v===undefined)return '';if(typeof v==='object'){if('result'in v)return cellValue(v.result);if(v.richText)return v.richText.map(x=>x.text).join('');if(v.text)return v.text;return '';}return String(v);}
+const isNumber=value=>String(value??'').trim()!==''&&/^\d+(?:,\d{3})*(?:\.\d+)?$|^\d+(?:\.\d+)?$/.test(String(value).trim());
+const unitWords=new Set('株 棵 盆 组 份 个 袋 包 瓶 桶 箱 批 卷 张 kg g t 公斤 千克 吨 平方米 ㎡ m2 立方米 m3 m³ 工 工日 人 人天 天 台班 趟 车 项 次 件 套 米 m'.split(' '));
+function inferHeaderless(raw){
+ const votes={name:new Map(),spec:new Map(),unit:new Map(),quantity:new Map(),price:new Map(),amount:new Map()};let rows=0;
+ const vote=(key,index)=>votes[key].set(index,(votes[key].get(index)||0)+1);
+ for(const row of raw.slice(0,35)){
+  const cells=row.map(value=>String(value??'').trim());const numeric=cells.map((value,i)=>isNumber(value)?i:-1).filter(i=>i>=0);
+  if(!numeric.length)continue;
+  const text=cells.map((value,i)=>({value,i})).filter(({value})=>value&&!isNumber(value));
+  const unit=text.find(({value})=>unitWords.has(norm(value)));
+  const spec=text.find(({value})=>/(高度|株高|高\d|冠幅|冠径|冠\d|胸径|地径|蓬径|直径|长[度宽]?|[hpdlg]\s*\d|\d+(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|米)|\d+\s*[-~～×x*]\s*\d+)/i.test(value));
+  const name=text.find(({value,i})=>i!==unit?.i&&i!==spec?.i&&!/^(小计|合计|总计|税额|实收|优惠|备注|序号)/.test(value));
+  rows++;if(name)vote('name',name.i);if(unit)vote('unit',unit.i);if(spec)vote('spec',spec.i);
+  const nums=numeric.filter(i=>!name||i>name.i);if(!nums.length)continue;
+  const last=nums.at(-1),previous=nums.at(-2),before=nums.at(-3);
+  if(before!==undefined&&Math.abs(Number(cells[before])*Number(cells[previous])-Number(cells[last]))<.011){vote('quantity',before);vote('price',previous);vote('amount',last);}
+  else {vote('price',last);if(previous!==undefined)vote('quantity',previous);}
+ }
+ if(!rows||!votes.price.size)return null;
+ const columns={};for(const [key,map]of Object.entries(votes))if(map.size)columns[key]=[...map].sort((a,b)=>b[1]-a[1])[0][0];
+  if(columns.name!==undefined&&columns.price===columns.name)return null;
+ return columns;
+}
+function specWithHeaderUnit(value,heading){
+ const unit=norm(heading).match(/(?:规格|尺寸)(?:\()?((?:mm|毫米|cm|厘米|m|米))(?:\))?$/)?.[1];
+ if(!unit)return value;
+ const completed=String(value).replace(/(高度|株高|冠幅|冠径|蓬幅|蓬径|胸径|米径|地径|长度|藤长|高|冠|h|p|d|g|l)\s*[:=]?\s*(\d+(?:\.\d+)?(?:\s*[-~～]\s*\d+(?:\.\d+)?)?)(mm|毫米|cm|厘米|m|米)?/gi,(_,label,number,explicit)=>label+number+(explicit||unit));
+ return /^\d+(?:\.\d+)?(?:\s*[-~～]\s*\d+(?:\.\d+)?)?$/.test(completed)?completed+unit:completed;
+}
 async function table(file,{purpose='project'}={}){
  const tables=[];
  if(file.name.toLowerCase().endsWith('.csv')){
@@ -54,7 +83,7 @@ async function table(file,{purpose='project'}={}){
  }
  const items=[],skipped=[],layouts=[],rentalReceipts=[];let recognized=0;
  const dimensionHeader=value=>{
-  const text=norm(value),hit=text.match(/^(高度|株高|h|冠幅|冠径|蓬幅|蓬径|p|胸径|米径|d|地径|g)(?:\((cm|厘米|m|米)\)|(cm|厘米|m|米))?$/);
+  const text=norm(value),hit=text.match(/^(高度|株高|高|h|冠幅|冠径|冠|蓬幅|蓬径|p|胸径|米径|d|地径|g)(?:\((mm|毫米|cm|厘米|m|米)\)|(mm|毫米|cm|厘米|m|米))?$/);
   return hit?{label:hit[1],unit:hit[2]||hit[3]||'cm'}:null;
  };
  for(const {name,raw,mergeTargets={},formulaCells={}} of tables){
@@ -65,21 +94,26 @@ async function table(file,{purpose='project'}={}){
     Object.entries(aliases).forEach(([key,words])=>{if(words.some(word=>norm(word)===norm(value)))found[key]=j;});
     const dimension=dimensionHeader(value);if(dimension)dims.push({...dimension,index:j});
    });
-   if('name'in found&&('spec'in found||'price'in found||'amount'in found||dims.length)){columns=found;dimensions=dims;header=i;break;}
+   if('price'in found||'name'in found&&('spec'in found||'amount'in found||dims.length)){columns=found;dimensions=dims;header=i;break;}
   }
-  if(header<0)continue;
-  if(!isIndoor&&periodFromText(raw[header][columns.price])&&/租|元[\/／]/.test(String(raw[header][columns.price])))throw Error('这份文件是按周期计价的租赁报价，请切换到室内植物租赁工作区导入。');
-  if(isIndoor)for(let r=header+1;r<raw.length;r++){const label=raw[r].map(value=>String(value??'')).find(value=>/^实收(?:金额)?$/.test(value.trim()));if(label&&columns.amount!==undefined){const value=Number(raw[r][columns.amount]);if(Number.isFinite(value)&&String(raw[r][columns.amount]??'')!=='')rentalReceipts.push({sheet:name,value,row:r+1,period:periodFromText(raw[header][columns.price])||$('rental-period').value});}}
+  if(header<0&&purpose==='prices'){const inferred=inferHeaderless(raw);if(inferred){columns=inferred;header=-1;}}
+  if(header<0&&!Object.keys(columns).length)continue;
+  if(header>=0&&purpose==='prices'){const inferred=inferHeaderless(raw.slice(header+1));if(inferred)for(const [field,index]of Object.entries(inferred))if(columns[field]===undefined)columns[field]=index;}
+  const headerValues=header<0?[]:raw[header];
+  if(!isIndoor&&periodFromText(headerValues[columns.price])&&/租|元[\/／]/.test(String(headerValues[columns.price])))throw Error('这份文件是按周期计价的租赁报价，请切换到室内植物租赁工作区导入。');
+  if(isIndoor)for(let r=header+1;r<raw.length;r++){const label=raw[r].map(value=>String(value??'')).find(value=>/^实收(?:金额)?$/.test(value.trim()));if(label&&columns.amount!==undefined){const value=Number(raw[r][columns.amount]);if(Number.isFinite(value)&&String(raw[r][columns.amount]??'')!=='')rentalReceipts.push({sheet:name,value,row:r+1,period:periodFromText(headerValues[columns.price])||$('rental-period').value});}}
   recognized++;layouts.push({sheet:name,headerRow:header+1,columns:{...columns},dimensions:dimensions.map(d=>({...d}))});
   raw.slice(header+1).forEach((r,index)=>{
    const item=Object.fromEntries(Object.entries(columns).map(([key,j])=>[key,String(r[j]??'').trim()]));item.line=`${name} 第${header+index+2}`;
+   if(purpose==='prices'&&!/^\d+(?:\.\d+)?$/.test(String(item.price??'').replace(/[,￥¥]/g,'').trim())){if(r.some(value=>String(value??'').trim()))skipped.push(item.line);return;}
    if(item.business&&item.business!==MODE)throw Error('这份备份属于'+(item.business==='indoor'?'室内租赁':'室外植物')+'工作区，请切换后再导入，避免混入当前价格库。');
-   if(isIndoor)item.billingPeriod=periodFromText(item.billingPeriod)||periodFromText(r[columns.unit])||periodFromText(raw[header][columns.price])||periodFromText(raw[header][columns.duration])||$('rental-period').value;
+   if(isIndoor)item.billingPeriod=periodFromText(item.billingPeriod)||periodFromText(r[columns.unit])||periodFromText(headerValues[columns.price])||periodFromText(headerValues[columns.duration])||$('rental-period').value;
+   if(item.spec)item.spec=specWithHeaderUnit(item.spec,headerValues[columns.spec]);
    if(!item.spec&&dimensions.length)item.spec=dimensions.filter(d=>String(r[d.index]??'').trim()).map(d=>{
-    const value=String(r[d.index]).trim();return d.label+value+(/(?:cm|厘米|m|米)$/i.test(value)?'':d.unit);
+    const value=String(r[d.index]).trim();return d.label+value+(/(?:mm|毫米|cm|厘米|m|米)$/i.test(value)?'':d.unit);
    }).join(' ');
    const primaryName=String(item.name||'').trim();
-   const headerNames=raw[header].map(value=>String(value??''));
+   const headerNames=headerValues.map(value=>String(value??''));
    const candidates=headerNames.map((label,column)=>({label,column})).filter(({label})=>/^(点位|位置|项目|项目名称|费用名称|名称|品名|项目内容|工作内容|内容|品项|材料名称|备注|说明)$/.test(label.trim()));
    const fallback=candidates.find(({column})=>String(r[column]??'').trim());
    const label=primaryName||String(fallback?r[fallback.column]:'').trim();
@@ -91,10 +125,10 @@ async function table(file,{purpose='project'}={}){
    if(summary||summaryElsewhere||aliases.name.some(word=>norm(word)===norm(primaryName)))return;
    if(!primaryName&&!transactional)return;
    const nameColumn=primaryName?columns.name:fallback?.column??columns.name;
-   item.name=label||`未命名项目（${item.line}行）`;
+   item.name=label||`未命名项目（${item.line}）`;
    const stored=customLibrary.find(entry=>norm(entry.name)===norm(item.name)&&specKey(itemSpec({...item,category:entry.category}))===specKey(itemSpec(entry))&&(!item.unit||unitKey(entry.unit)===unitKey(isIndoor?rentalUnit(item.unit):item.unit)));
    const reference=[...customLibrary,...library].find(entry=>norm(entry.name)===norm(item.name));
-   const plantHeader=/植物|苗木|品种/.test(String(raw[header][columns.name]||''));
+   const plantHeader=/植物|苗木|品种/.test(String(headerValues[columns.name]||''));
    const explicitCategory=/^(other|其他|其它|其他品类|其它品类|材料|人工|费用|服务|配件|非植物|plant|植物)$/.test(norm(item.category));
    item.category=explicitCategory?categoryOf(item):!primaryName?'other':categoryOf({...item,unit:'',category:undefined})==='other'?'other':stored?.category||reference?.category||(vocabulary.includes(item.name)||/^(株|棵|盆)$/.test(item.unit||'')?'plant':categoryOf({...item,category:undefined})==='other'?'other':plantHeader?'plant':'other');
    item.chargeType=norm(item.chargeType)==='once'||/一次|单次/.test(item.chargeType||'')?'once':/周期|recurring/.test(item.chargeType||'')?'recurring':stored?.chargeType||reference?.chargeType||(item.category==='other'?'once':'recurring');
@@ -109,8 +143,8 @@ async function table(file,{purpose='project'}={}){
 
   });
  }
- if(!recognized)throw Error('未找到报价表头。需要项目名称/植物名称/品类列，以及规格、单价或高度/冠幅等列。已检查所有工作表的前30行。');
- if(!items.length)throw Error('没有读到项目数据。');return {items,skipped,layouts,rentalReceipts,sourceTables:tables.map(table=>({name:table.name,raw:table.raw})),taxIncluded:isIndoor&&tables.some(table=>table.raw.some(row=>row.some(value=>/(?<!不)含税/.test(String(value??'')))))};
+ if(!recognized)throw Error('未识别到可用报价行。请检查文件中是否包含项目与单价。');
+ if(!items.length)throw Error(purpose==='prices'?'没有找到可导入的非负单价；原表未做修改。':'没有读到项目数据。');return {items,skipped,layouts,rentalReceipts,sourceTables:tables.map(table=>({name:table.name,raw:table.raw})),taxIncluded:isIndoor&&tables.some(table=>table.raw.some(row=>row.some(value=>/(?<!不)含税/.test(String(value??'')))))};
 }
 const key=priceKey;
 const mainMatch=row=>{
@@ -261,7 +295,7 @@ $('import').onclick=()=>run('import',async()=>{
  const priceItems=items.filter(row=>!isIndoor||!row.isGift).map(row=>isIndoor?{...row,unit:rentalUnit(row.unit),billingPeriod:row.chargeType==='once'?'once':row.billingPeriod,business:MODE}: {...row,business:MODE});
  const {entries,errors}=priceEntries(priceItems,file.name,sourceId);
  if(!entries.size&&!errors.length)throw Error('没有可加入价格库的有效报价。');
- if(errors.length)throw Error('本次未保存，请修正后重试。\n'+errors.join('\n'));
+ if(!entries.size)throw Error('没有找到可导入的单价；原表未做修改。');
  const incoming=[...entries.values()];
  const freshSource=incoming.every(entry=>entry.sourceId===sourceId&&entry.source===file.name),archiveEligible=/\.xlsx$/i.test(file.name)&&freshSource;
  const retained=library.filter(row=>!(freshSource&&row.sourceId===sourceId)&&(row.sourceId||!incoming.some(entry=>entry.source===row.source&&priceKey(entry)===priceKey(row)&&Number(entry.price)===Number(row.price)&&(entry.billingPeriod||'')===(row.billingPeriod||''))));
@@ -269,7 +303,7 @@ $('import').onclick=()=>run('import',async()=>{
  const next=[...combined.values()];
  savePrices(next);if(rows.length)rematchAfterImport();
  let archiveWarning='';if(archiveEligible&&priceEditor)try{await priceEditor.registerOriginal(file,sourceId);}catch(error){archiveWarning='\n报价已保存，但原文件暂未保存：'+error.message;}
- notice(`${isIndoor?`室内租赁：默认单位 ${$('rental-default-unit').value}；赠送 ${gifts} 行不入库。\n`:''}导入 ${priceItems.length} 行，涉及 ${entries.size} 条有效报价。当前价格库共 ${library.length} 条报价，多来源报价将共同参与计算。`+(rows.length?'\n当前清单已自动重新填价：'+matchingReport():'')+`\n已包含 ${priceItems.filter(row=>row.category==='other').length} 行材料、人工等其他品类。可在“查看和编辑价格库”中修改。`+archiveWarning);
+ notice(`${isIndoor?`室内租赁：默认单位 ${$('rental-default-unit').value}；赠送 ${gifts} 行不入库。\n`:''}导入 ${priceItems.length} 行，涉及 ${entries.size} 条有效报价。当前价格库共 ${library.length} 条报价，多来源报价将共同参与计算。`+(rows.length?'\n当前清单已自动重新填价：'+matchingReport():'')+`\n已包含 ${priceItems.filter(row=>row.category==='other').length} 行材料、人工等其他品类。可在“查看和编辑价格库”中修改。`+(skipped.length||errors.length?`\n另有 ${skipped.length+errors.length} 行未找到可用单价，未作为报价入库；原文件仍可编辑。`:'')+archiveWarning);
 });
 $('quote').onclick=()=>run('quote',async()=>{
  const file=selected('project');let text='',warning='';

@@ -1,9 +1,9 @@
-import {priceEntries,quoteKey,categoryOf} from './pricing.js?v=catalog9';
+import {priceEntries,quoteKey,categoryOf} from './pricing.js?v=flex10';
 import {PERIODS,rentalUnit} from './rental.js?v=dual6';
-import {createExcelPreview} from './excel-preview.js?v=catalog9';
-import {fillOriginalXlsx} from './original-xlsx.js?v=catalog9';
-import {editWorkbook} from './workbook-edits.js?v=catalog9';
-import {loadPriceFiles,storePriceFile} from './library-files.js?v=catalog9';
+import {createExcelPreview} from './excel-preview.js?v=flex10';
+import {fillOriginalXlsx} from './original-xlsx.js?v=flex10';
+import {editWorkbook} from './workbook-edits.js?v=flex10';
+import {loadPriceFiles,storePriceFile} from './library-files.js?v=flex10';
 const $=id=>document.getElementById(id);
 const groupKey=row=>row.sourceId?'id:'+row.sourceId:'name:'+(row.source||'历史报价');
 const address=(column,row)=>{let n=column+1,name='';for(;n;n=Math.floor((n-1)/26))name=String.fromCharCode(65+(n-1)%26)+name;return name+row;};
@@ -66,10 +66,10 @@ export function initPriceLibraryEditor({mode,getEntries,saveEntries,parse,saveBl
   }
   const previous=getEntries(),byRow=new Map();for(const entry of previous.filter(row=>row.sourceId===active.file.sourceId))for(const origin of entry._locations||[])byRow.set(origin.sheet+'!'+origin.row,entry);
   const items=data.items.filter(row=>!indoor||!row.isGift).map(row=>{
-   const prior=byRow.get(row._origin.sheet+'!'+row._origin.row),edited=prior?._editedFields||[];for(const field of ['spec','unit','category','chargeType','billingPeriod','notes'])if(edited.includes(field)&&row._origin.columns[field]===undefined&&!(field==='spec'&&row._origin.dimensions?.length))row[field]=prior[field];
+   const prior=byRow.get(row._origin.sheet+'!'+row._origin.row),edited=prior?._editedFields||[];for(const field of ['name','spec','unit','category','chargeType','billingPeriod','notes'])if(edited.includes(field)&&(field==='name'?row._origin.nameColumn===undefined:row._origin.columns[field]===undefined)&&!(field==='spec'&&row._origin.dimensions?.length))row[field]=prior[field];
    return {...row,unit:indoor?rentalUnit(row.unit):row.unit,billingPeriod:indoor?(row.chargeType==='once'?'once':row.billingPeriod):undefined,source:active.file.filename,sourceId:active.file.sourceId,business:mode};
   });const checked=priceEntries(items,active.file.filename,active.file.sourceId);if(checked.errors.length)throw Error('本次未保存，请修正原表：\n'+checked.errors.join('\n'));if(!checked.entries.size)throw Error('未读到有效报价，本次不覆盖已保存价格库。');
-  const incoming=[...checked.entries.values()].map(entry=>{const prior=previous.find(row=>quoteKey(row)===quoteKey(entry));if(prior)entry.id=prior.id;const origin=entry._locations[0],old=origin&&byRow.get(origin.sheet+'!'+origin.row);entry._editedFields=(old?._editedFields||[]).filter(field=>origin.columns[field]===undefined&&!(field==='spec'&&origin.dimensions?.length)&&field!=='name'&&field!=='price');return entry;});
+  const incoming=[...checked.entries.values()].map(entry=>{const prior=previous.find(row=>quoteKey(row)===quoteKey(entry));if(prior)entry.id=prior.id;const origin=entry._locations[0],old=origin&&byRow.get(origin.sheet+'!'+origin.row);entry._editedFields=(old?._editedFields||[]).filter(field=>(field==='name'?origin.nameColumn===undefined:origin.columns[field]===undefined)&&!(field==='spec'&&origin.dimensions?.length)&&field!=='price');return entry;});
   await storePriceFile(mode,active.file.sourceId,active.file.filename,result.buffer);
   try{saveEntries([...previous.filter(row=>row.sourceId!==active.file.sourceId),...incoming]);}catch(error){await storePriceFile(mode,active.file.sourceId,active.file.filename,active.file.buffer);throw error;}
   files.set(active.file.sourceId,{...active.file,buffer:result.buffer});active.pending.clear();closeFile();await showFile();status('文件已保存，已更新 '+incoming.length+' 条报价并重新匹配当前清单。'+(result.warnings.length?'需核对：'+[...new Set(result.warnings)].join('；'):''));

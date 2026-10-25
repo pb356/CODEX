@@ -15,14 +15,15 @@ export function matchingSpec(row){return categoryOf(row)==='other'&&['/','-','�
 export function specKey(value){
  const text=norm(value).replace(/[～~至–—]/g,'-').replace(/(高度|株高|冠幅|冠径|蓬径|蓬幅|胸径|米径|地径)[,;]*(?=\1)/g,'');
  if(!text)return '';
- const dimensions={高度:'h',株高:'h',h:'h',冠幅:'p',冠径:'p',蓬径:'p',蓬幅:'p',p:'p',胸径:'d',米径:'d',d:'d',地径:'g',g:'g',长度:'l',藤长:'l',l:'l'};
- const pattern=/(高度|株高|冠幅|冠径|蓬径|蓬幅|胸径|米径|地径|长度|藤长|h|p|d|g|l)[:=]?(\d+(?:\.\d+)?)(?:-(\d+(?:\.\d+)?))?(cm|厘米|m|米)?/g;
+ const plain=text.match(/^(\d+(?:\.\d+)?)(?:-(\d+(?:\.\d+)?))?(mm|毫米|cm|厘米|m|米)?$/);
+ if(plain){const factor=plain[3]==='m'||plain[3]==='米'?100:plain[3]==='mm'||plain[3]==='毫米'?0.1:1;const numeric=n=>String(Math.round(Number(n)*factor*1e6)/1e6);return 'dimensions:s:'+numeric(plain[1])+(plain[2]?'-'+numeric(plain[2]):'');}
+ const dimensions={高度:'h',株高:'h',高:'h',h:'h',冠幅:'p',冠径:'p',冠:'p',蓬径:'p',蓬幅:'p',p:'p',胸径:'d',米径:'d',d:'d',地径:'g',g:'g',长度:'l',藤长:'l',l:'l'};
+ const pattern=/(高度|株高|冠幅|冠径|蓬径|蓬幅|胸径|米径|地径|长度|藤长|高|冠|h|p|d|g|l)[:=]?(\d+(?:\.\d+)?)(mm|毫米|cm|厘米|m|米)?(?:-(\d+(?:\.\d+)?)(mm|毫米|cm|厘米|m|米)?)?/g;
  const tokens=[];let duplicate=false;const seen=new Set();
- const rest=text.replace(pattern,(_,label,low,high,unit)=>{
+ const rest=text.replace(pattern,(_,label,low,lowUnit,high,highUnit)=>{
   const dimension=dimensions[label];if(seen.has(dimension))duplicate=true;seen.add(dimension);
-  const factor=unit==='m'||unit==='米'?100:1;
-  const numeric=n=>String(Math.round(Number(n)*factor*1e6)/1e6);
-  tokens.push(`${dimension}:${numeric(low)}${high?'-'+numeric(high):''}`);return '';
+  const numeric=(n,unit)=>{const factor=unit==='m'||unit==='米'?100:unit==='mm'||unit==='毫米'?0.1:1;return String(Math.round(Number(n)*factor*1e6)/1e6);};
+  tokens.push(`${dimension}:${numeric(low,lowUnit||highUnit)}${high?'-'+numeric(high,highUnit||lowUnit):''}`);return '';
  });
  if(tokens.length&&!duplicate&&!rest.replace(/[,;，；/()×x*]/g,''))return 'dimensions:'+tokens.sort().join('|');
  // For free-text specifications preserve every descriptive word. No fuzzy or
@@ -67,22 +68,28 @@ export function matchPrice(row,library,{tolerance=0.1}={}){
  result.candidates=candidates;
  if(!candidates.length){result.status='价格库无此项目';return result;}
  const requested=matchingSpec(row);
- if(!requested&&category==='plant'){result.status='规格缺失，暂不能判断适用报价';return result;}
- const eligible=candidates.filter(item=>!row.unit||unitKey(item.unit)===unitKey(row.unit));
+ const eligible=candidates.filter(item=>!row.unit||!item.unit||unitKey(item.unit)===unitKey(row.unit));
  // All appropriate quotations participate, across source files and tiers.
  // Importing the same quotation twice must not give it extra weight.
- const accepted=new Map();
+ const accepted=new Map(),fallback=new Map();
  for(const item of eligible){
   const quoted=matchingSpec(item),exact=specKey(quoted)===specKey(requested),distance=requested&&quoted?specificationDistance(requested,quoted):null;
-  if(exact||distance&&(distance.contained||distance.score<=tolerance+1e-9))accepted.set(quoteKey(item),{...item,matchKind:exact?'完全匹配':distance.contained?'范围内':'相近规格'});
+  const incomplete=(!requested||!quoted)&&!(category==='other'&&!requested&&!quoted);
+  if(exact||distance&&(distance.contained||distance.score<=tolerance+1e-9))accepted.set(quoteKey(item),{...item,matchKind:incomplete?'信息不全':exact?'完全匹配':distance.contained?'范围内':'相近规格'});
+  else if(incomplete)fallback.set(quoteKey(item),{...item,matchKind:'信息不全'});
  }
+ if(!accepted.size)for(const [key,value]of fallback)accepted.set(key,value);
  const quotes=[...accepted.values()];
  if(!quotes.length){result.status=eligible.length?'规格超出容差，请核对':'单位不同，请核对';return result;}
- if(new Set(quotes.map(item=>unitKey(item.unit))).size>1){result.status='清单单位缺失且报价计量单位不同，暂不能混合平均';return result;}
+ const knownUnits=new Set(quotes.map(item=>unitKey(item.unit)).filter(Boolean));
+ if(knownUnits.size>1){result.status='报价计量单位不同，请先补齐单位';return result;}
+ const specIncomplete=quotes.some(item=>item.matchKind==='信息不全');
+ const incomplete=specIncomplete||quotes.some(item=>!item.unit||!row.unit);
+ if(specIncomplete&&new Set(quotes.map(item=>Number(item.price))).size>1){result.status='名称相同但规格不全且价格不同，请补齐规格后确认';return result;}
  const average=quotes.reduce((sum,item)=>sum+Number(item.price),0)/quotes.length;
  const price=quotes.length>1?roundAveragePrice(average):Number(quotes[0].price);
  Object.assign(result,{price:String(price),unit:row.unit||quotes[0].unit,source:[...new Set(quotes.map(item=>item.source))].join('；'),matchedSpec:[...new Set(quotes.map(item=>item.spec))].join('；'),matchedName:[...new Set(quotes.map(item=>item.name))].join('；'),matchedQuotes:quotes,quoteCount:quotes.length,averagePrice:average});
- result.status=quotes.length>1?`自动均价（${quotes.length}条，${average.toFixed(2)}→${price}）`:quotes[0].matchKind==='完全匹配'?'已匹配':quotes[0].matchKind==='范围内'?'范围内采用库价':'相近规格采用库价';
+ result.status=incomplete?'信息不全，按同名报价参考，请核对规格/单位':quotes.length>1?`自动均价（${quotes.length}条，${average.toFixed(2)}→${price}）`:quotes[0].matchKind==='完全匹配'?'已匹配':quotes[0].matchKind==='范围内'?'范围内采用库价':'相近规格采用库价';
  return result;
 }
 export function priceEntries(items,source,sourceId=''){
@@ -90,7 +97,8 @@ export function priceEntries(items,source,sourceId=''){
  for(const item of items){
   const text=String(item.price??'').replace(/[,￥¥]/g,'').trim();
   const category=categoryOf(item);
-  if(!String(item.name||'').trim()||!item.unit||(category==='plant'&&!String(item.spec||'').trim())||!/^\d+(\.\d+)?$/.test(text)||!Number.isFinite(Number(text))){errors.push(`第${item.line??'?'}行：名称、单位或植物规格缺失，或单价不是非负数字`);continue;}
+  if(!/^\d+(\.\d+)?$/.test(text)||!Number.isFinite(Number(text))){errors.push(`第${item.line??'?'}行：没有可用的非负单价`);continue;}
+  if(!String(item.name||'').trim())item.name=`未命名项目（${item.line??'?'}）`;
   const chargeType=item.chargeType||(category==='other'?'once':'recurring');
   const entry={name:item.name,spec:item.spec||'',unit:item.unit,price:String(Number(text)),category,chargeType,notes:item.notes||'',source:item.source||source,sourceId:/^[a-f0-9]{64}$/i.test(item.sourceId||'')?item.sourceId.toLowerCase():item.source?'':sourceId,...(item.billingPeriod?{billingPeriod:chargeType==='once'?'once':item.billingPeriod}:{}),...(item.business?{business:item.business}:{}),_locations:item._origin?[item._origin]:item._locations||[]},key=quoteKey(entry);
   const previous=entries.get(key);if(previous)entry._locations=[...previous._locations,...entry._locations];entries.set(key,entry);
