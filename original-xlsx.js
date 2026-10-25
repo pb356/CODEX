@@ -1,3 +1,4 @@
+import {PERIODS,rentDuration} from './rental.js?v=dual6';
 import {calculateFormula,columnName,columnNumber} from './formulas.js?v=auto4';
 const NS='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const REL='http://schemas.openxmlformats.org/package/2006/relationships';
@@ -8,7 +9,7 @@ const child=(root,name)=>Array.from(root.children).find(node=>node.localName===n
 const serialize=doc=>new XMLSerializer().serializeToString(doc);
 const number=value=>{const text=String(value??'').replace(/[,￥¥]/g,'').trim();return text!==''&&Number.isFinite(Number(text))?Number(text):null;};
 const money=value=>Math.round((value+Number.EPSILON)*100)/100;
-export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',taxRate=null,discountMode='preserve'}={}){
+export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',taxRate=null,discountMode='preserve',rental=null}={}){
  if(rows.some(row=>!row._origin))throw Error('新增行没有原表位置，请先在原Excel中添加对应行，或选择“标准表”导出。');
  if(taxMode==='add'&&(taxRate===null||!Number.isFinite(taxRate)||taxRate<0||taxRate>100))throw Error('请指定有效税率。');
  const zip=await JSZip.loadAsync(buffer),warnings=[],workbook=xml(await zip.file('xl/workbook.xml').async('string'));
@@ -63,19 +64,26 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
  for(const layout of context.layouts){
   const book=books.get(layout.sheet);if(!book)throw Error('无法定位原工作表：'+layout.sheet);
   const columns={...layout.columns};let maxColumn=Math.max(...Array.from(book.cells.keys()).map(columnNumber),1);
-  for(const field of ['price','amount'])if(columns[field]===undefined){columns[field]=maxColumn++;write(book,columnName(columns[field]+1)+layout.headerRow,field==='price'?'单价':'金额');warnings.push(`${layout.sheet}原表无${field==='price'?'单价':'金额'}列，已在右侧添加，原打印区域不变。`);}
+  for(const field of ['price','amount',...(rental?['duration']:[])])if(columns[field]===undefined){columns[field]=maxColumn++;write(book,columnName(columns[field]+1)+layout.headerRow,field==='price'?'单价':field==='duration'?'租期('+PERIODS[rental.period]+')':'金额');warnings.push(`${layout.sheet}原表无${field==='price'?'单价':field==='duration'?'租期('+PERIODS[rental.period]+')':'金额'}列，已在右侧添加，原打印区域不变。`);}
   const at=(field,r)=>columnName(columns[field]+1)+r;
   const styles=book.cells.get(at('price',layout.headerRow+1))?.getAttribute('s');
   const active=rows.filter(row=>row._origin.sheet===layout.sheet);
+  if(rental){write(book,at('price',layout.headerRow),PERIODS[rental.period]+'租金单价');write(book,at('duration',layout.headerRow),'租期('+PERIODS[rental.period]+')');}
+  let replacedRentalFormula=false;
   for(const row of active){
    const origin=row._origin,r=origin.row;
    for(const field of ['name','spec','unit','quantity'])if(columns[field]!==undefined&&String(row[field]??'')!==String(origin.original[field]??''))write(book,at(field,r),field==='quantity'?(number(row[field])??''):row[field]);
-   const price=number(row.price),quantity=number(row.quantity);
+   const price=number(row.price),quantity=number(row.quantity),duration=rental?rentDuration(row,rental.duration):1;
+   if(rental)write(book,at('duration',r),duration);
+   if(rental&&row.isGift){write(book,at('price',r),price??0,{style:styles});write(book,at('amount',r),0,{style:book.cells.get(at('amount',r))?.getAttribute('s')||styles});continue;}
    if(price===null||quantity===null){missing++;write(book,at('price',r),price??'',{style:styles});write(book,at('amount',r),'');continue;}
    write(book,at('price',r),price,{style:styles});
    const old=book.cells.get(at('amount',r)),f=old?formulaFor(book,old):null;
-   write(book,at('amount',r),money(price*quantity),{formula:f||(columns.quantity!==undefined?`ROUND(${at('quantity',r)}*${at('price',r)},2)`:String(money(price*quantity))),style:old?.getAttribute('s')||styles});
+   const rentalFormula=rental?(columns.quantity!==undefined?`ROUND(${at('quantity',r)}*${at('price',r)}*${at('duration',r)},2)`:String(money(price*quantity*duration))):null;
+   if(rental&&f&&f!==rentalFormula)replacedRentalFormula=true;
+   write(book,at('amount',r),money(price*quantity*duration),{formula:rentalFormula||f||(columns.quantity!==undefined?`ROUND(${at('quantity',r)}*${at('price',r)},2)`:String(money(price*quantity))),style:old?.getAttribute('s')||styles});
   }
+  if(replacedRentalFormula)warnings.push(`${layout.sheet}植物行金额已按数量×周期单价×租期重新计算，原行公式中的其他折扣请核对。`);
   for(const original of context.items.filter(row=>row._origin.sheet===layout.sheet))if(!originKeys.has(layout.sheet+'!'+original._origin.row)){
    write(book,at('price',original._origin.row),'');write(book,at('amount',original._origin.row),'');warnings.push(`${layout.sheet}第${original._origin.row}行已在网页移除：保留原表行位置，但清空单价和金额。`);
   }
@@ -120,6 +128,16 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
     else if(!existing)warnings.push(`${layout.sheet}第${r}行税费未找到明确税率，保留原固定税费，请核对。`);
     taxes.push(amountAddress);continue;
    }
+   if(rental&&/^实收(?:金额)?$/.test(label)){
+    const fixed=number(textValue(cell)),term=context.rentalReceipts?.find(term=>term.sheet===layout.sheet&&term.row===r);
+    if(discountMode==='preserve'&&term?.period&&term.period!==rental.period)throw Error('原表实收计租周期与当前设置不同，请切回原周期或选择按行重新求和，不能把月实收直接当日/年实收。');
+    if(discountMode==='preserve'&&fixed!==null){
+     const factor=layout.columns.duration===undefined?rental.duration:1;
+     write(book,amountAddress,money(fixed*factor),{formula:`ROUND(${fixed}*${factor},2)`});
+     warnings.push(`${layout.sheet}实收采用原表协商金额${fixed}元${factor!==1?'乘租期'+factor+PERIODS[rental.period]:''}，未擅自重新推算折扣；请核对。`);
+    }else write(book,amountAddress,null,{formula:sum([...components,...pending,...taxes])});
+    totalAddress=amountAddress;continue;
+   }
    if(total){
     let formula=existing||sum([...components,...pending,...taxes]);
     if(!existing&&extraRate&&!taxSeen)formula=`ROUND((${sum([...components,...pending])})*(1+${extraRate}),2)`;
@@ -158,7 +176,7 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
  }
  if(unsupported.size)warnings.push(`${unsupported.size} 个复杂/共享公式已保留并清除旧缓存，需在Excel打开时自动重算。`);
  let grand=0;for(const summary of summaries){try{summary.total=money(Number(read(summary.sheet,summary.address)));grand+=summary.total;}catch{summary.total='打开Excel后重算';}}
- const audit=[['报价计算与核对','说明'],['计价状态',missing?`不完整：${missing}行缺单价或数量，总价仅供核对`:'本次植物行均已填写单价与数量'],['原表固定折后价处理',discountMode==='preserve'?'沿用原固定价，出现时须人工核对':'按更新行金额求和，不应用原固定折扣'],['税费口径',taxMode==='original'?'沿用原表税费，不重复加税':taxMode==='included'?'库价已含税，不额外加税':`未税价加税，税率${taxRate}%`],...summaries.flatMap(s=>[[s.sheet+'合计',s.total],[s.sheet+'新增税率',s.extraRate?(s.extraRate*100)+'%':'未额外加税']]),['各清单合计汇总（非跨表去重）',money(grand)],...warnings.map(w=>['需核对',w]),[],['植物品种','目标规格','数量','最终单价','采用库规格','匹配方式','报价来源','参与报价数','原始平均价']];
+ const audit=[['报价计算与核对','说明'],['计价状态',missing?`不完整：${missing}行缺单价或数量，总价仅供核对`:'本次植物行均已填写单价与数量'],...(rental?[['租赁计价口径','数量×每'+PERIODS[rental.period]+'单价×租期；默认租期'+rental.duration+PERIODS[rental.period]+'，逐行租期优先']]:[]),['原表固定折后价处理',discountMode==='preserve'?'沿用原固定价，出现时须人工核对':'按更新行金额求和，不应用原固定折扣'],['税费口径',taxMode==='original'?'沿用原表税费，不重复加税':taxMode==='included'?'库价已含税，不额外加税':`未税价加税，税率${taxRate}%`],...summaries.flatMap(s=>[[s.sheet+'合计',s.total],[s.sheet+'新增税率',s.extraRate?(s.extraRate*100)+'%':'未额外加税']]),['各清单合计汇总（非跨表去重）',money(grand)],...warnings.map(w=>['需核对',w]),[],['植物品种','目标规格','数量','最终单价','采用库规格','匹配方式','报价来源','参与报价数','原始平均价']];
  for(const row of rows)audit.push([row.name,row.spec,row.quantity,row.price,(row.matchedName||'')+' '+(row.matchedSpec||''),row.status,row.source,row.quoteCount||0,row.averagePrice??'']);
  audit.push([],['匹配报价明细','目标规格','库中名称','库中规格','库中单价','来源']);for(const row of rows)for(const quote of row.matchedQuotes||[])audit.push([row.name,row.spec,quote.name,quote.spec,Number(quote.price),quote.source]);
  const auditName=(()=>{let name='报价计算核对',i=1;while(books.has(name))name='报价计算核对'+i++;return name;})();

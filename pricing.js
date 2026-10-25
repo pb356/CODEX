@@ -5,8 +5,8 @@ export function unitKey(value){const unit=norm(value);return ({'棵':'株','平�
 export function specKey(value){
  const text=norm(value).replace(/[～~至–—]/g,'-').replace(/(高度|株高|冠幅|冠径|蓬径|蓬幅|胸径|米径|地径)[,;]*(?=\1)/g,'');
  if(!text)return '';
- const dimensions={高度:'h',株高:'h',h:'h',冠幅:'p',冠径:'p',蓬径:'p',蓬幅:'p',p:'p',胸径:'d',米径:'d',d:'d',地径:'g',g:'g'};
- const pattern=/(高度|株高|冠幅|冠径|蓬径|蓬幅|胸径|米径|地径|h|p|d|g)[:=]?(\d+(?:\.\d+)?)(?:-(\d+(?:\.\d+)?))?(cm|厘米|m|米)?/g;
+ const dimensions={高度:'h',株高:'h',h:'h',冠幅:'p',冠径:'p',蓬径:'p',蓬幅:'p',p:'p',胸径:'d',米径:'d',d:'d',地径:'g',g:'g',长度:'l',藤长:'l',l:'l'};
+ const pattern=/(高度|株高|冠幅|冠径|蓬径|蓬幅|胸径|米径|地径|长度|藤长|h|p|d|g|l)[:=]?(\d+(?:\.\d+)?)(?:-(\d+(?:\.\d+)?))?(cm|厘米|m|米)?/g;
  const tokens=[];let duplicate=false;const seen=new Set();
  const rest=text.replace(pattern,(_,label,low,high,unit)=>{
   const dimension=dimensions[label];if(seen.has(dimension))duplicate=true;seen.add(dimension);
@@ -47,7 +47,7 @@ export function roundAveragePrice(value){
  if(last>=8)return integer-last+10;
  return integer;
 }
-export const quoteKey=row=>JSON.stringify([priceKey(row),String(Number(row.price)),row.sourceId||row.source||'']);
+export const quoteKey=row=>JSON.stringify([priceKey(row),String(Number(row.price)),row.sourceId||row.source||'',row.billingPeriod||'']);
 export function matchPrice(row,library,{tolerance=0.1}={}){
  const result={...row,price:'',source:'',matchedSpec:'',matchedName:'',matchedQuotes:[],quoteCount:0,averagePrice:null,candidates:[]};
  if(!library.length){result.status='价格库为空，请先导入报价';return result;}
@@ -78,7 +78,7 @@ export function priceEntries(items,source,sourceId=''){
  for(const item of items){
   const text=String(item.price??'').replace(/[,￥¥]/g,'').trim();
   if(!item.spec||!item.unit||!/^\d+(\.\d+)?$/.test(text)||!Number.isFinite(Number(text))){errors.push(`第${item.line??'?'}行：规格、单位缺失或单价不是非负数字`);continue;}
-  const entry={name:item.name,spec:item.spec,unit:item.unit,price:String(Number(text)),source:item.source||source,sourceId:/^[a-f0-9]{64}$/i.test(item.sourceId||'')?item.sourceId.toLowerCase():item.source?'':sourceId},key=quoteKey(entry);
+  const entry={name:item.name,spec:item.spec,unit:item.unit,price:String(Number(text)),source:item.source||source,sourceId:/^[a-f0-9]{64}$/i.test(item.sourceId||'')?item.sourceId.toLowerCase():item.source?'':sourceId,...(item.billingPeriod?{billingPeriod:item.billingPeriod}:{}),...(item.business?{business:item.business}:{})},key=quoteKey(entry);
   entries.set(key,entry);
  }
  return {entries,errors};
