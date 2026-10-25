@@ -11,6 +11,7 @@ main>p{font-size:17px;color:#607e6b;margin-bottom:26px}
 .card,.results{border:1px solid #dce8df;box-shadow:0 14px 42px #1742320b;background:#ffffffec}
 .cards .card{position:relative;overflow:hidden;min-height:290px;padding:27px 28px}
 .cards .card:before{content:"";position:absolute;left:0;top:0;right:0;height:4px;background:linear-gradient(90deg,#2b7753,#8ec1a0 60%,#d9ead9)}
+.cards .card.is-dragover{border-color:#31986a;background:#eefaf1;box-shadow:0 0 0 3px #31986a33}
 .cards .step{font-size:12px;color:#43896b;letter-spacing:.13em;font-weight:700}
 .cards h2{font-size:22px;letter-spacing:-.03em;margin:6px 0 18px}
 .format-only{color:#557367;font-size:14px;line-height:1.5;background:#f2f7f2;border:1px solid #dbeade;border-radius:9px;padding:10px 12px;margin:0 0 18px;min-height:43px}
@@ -28,6 +29,8 @@ button,.link{transition:transform .18s,box-shadow .18s,background .18s}button:no
 .task-progress-label{display:block;margin-top:8px;font-size:13px;font-weight:650}
 .image-excel-link{display:inline-block;margin-top:13px;color:#246d59;text-decoration:underline;text-underline-offset:3px;font-size:13px;font-weight:700}
 .image-excel-link:hover{color:#134835}
+.action-status{min-height:20px;margin:12px 0 0;color:#286248;font-size:14px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.action-status[data-error="true"]{color:#a12e20;font-weight:650}
 .ai-settings{background:linear-gradient(115deg,#eef6f1,#f5f8f4);border:1px solid #d8e9df;border-radius:12px;padding:16px 18px;margin:15px 0 20px}.ai-settings .bar{margin-bottom:8px;align-items:flex-end}.ai-settings label{display:grid;gap:6px;font-size:13px;font-weight:650;color:#315b47}.ai-settings input,.ai-settings select{max-width:240px;min-width:185px;padding:9px 11px;border:1px solid #bfd6c7;border-radius:7px;background:#fff;color:#204733;font:inherit}.ai-settings input:disabled{opacity:.6}.ai-settings p{margin:7px 0 0;line-height:1.55}
 #notice{background:#eaf5ec;border:1px solid #d4ead9;color:#265745}
 details,.results{scroll-margin-top:24px}

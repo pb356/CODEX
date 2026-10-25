@@ -1,8 +1,8 @@
 import {initPriceLibraryEditor} from './price-library-editor.js?v=visual3';
 import {imageToExcel,isImage} from './image-import.js?v=visual3';
 import {checkUpload} from './file-policy.js?v=visual3';
-import {plantNameKey,smartMatchPrice} from './smart-pricing.js?v=match4';
-import {AI_PROVIDERS,askPlantAI} from './ai-match.js?v=match4';
+import {plantNameKey,smartMatchPrice} from './smart-pricing.js?v=match5';
+import {AI_PROVIDERS,askPlantAI} from './ai-match.js?v=match5';
 import {createExcelPreview} from './excel-preview.js?v=visual3';
 import {customKey,itemSpec,validateCustom,lineAmount} from './custom-items.js?v=visual3';
 import {PERIODS,periodFromText,rentalUnit,rentDuration} from './rental.js?v=dual6';
@@ -41,6 +41,7 @@ function taskProgress(kind,label,ratio=null){
 function finishProgress(kind,success){if(!kind)return;taskProgress(kind,success?'处理完成':'处理未完成',success?1:null);progressTimers.set(kind,setTimeout(()=>{$(kind+'-progress').hidden=true;progressTimers.delete(kind);},success?1400:2400));}
 function ocrProgress(kind,event){const labels={'loading tesseract core':'加载识别引擎','loading language traineddata':'加载中英文模型','initializing tesseract':'初始化识别','initializing api':'准备识别','recognizing text':'识别图片文字'};const label=labels[event.status]||event.status||'识别图片';if(['读取图片','生成 Excel','识别完成'].includes(event.status)){taskProgress(kind,label,Number(event.progress)||0);return;}const base=event.status==='recognizing text'?.43:event.status==='loading language traineddata'?.17:.07;const span=event.status==='recognizing text'?.45:event.status==='loading language traineddata'?.2:.1;taskProgress(kind,label,Math.min(.88,base+span*(Number(event.progress)||0)));}
 function notice(text){$('notice').style.display='block';$('notice').textContent=text;}
+function actionStatus(kind,message,isError=false){const node=$(kind+'-action-status');if(!node)return;node.textContent=message;node.dataset.error=String(isError);node.setAttribute('role',isError?'alert':'status');}
 try {library=JSON.parse(localStorage.getItem(KEY)||'[]');if(!Array.isArray(library))throw Error();library=library.map(normalizeStoredQuote);}
 catch {notice('无法读取浏览器价格库。请检查浏览器存储权限，或用备份文件重新导入。');}
 const aliases={name:['植物品种','植物名称','植物种类','植物品名','绿植品种','绿植名称','绿植种类','苗木名称','苗木品种','苗木种类','品种名称','品种','种类','名称','品类','项目名称','项目','品项','项目内容','工作内容','费用名称','品名','材料名称'],spec:['规格','植物规格','苗木规格','规格cm','规格(cm)','规格mm','规格(mm)','规格m','规格(m)','尺寸','尺寸cm','尺寸mm','尺寸m','尺寸(m)'],unit:['单位','计量单位'],price:['单价','价格','综合单价','单价(元)','含税单价','不含税单价','单价(元/株)','单价(元/棵)','月租金','月租单价','月租金单价','租金(元/月)','月单价','日租金','日租单价','年租金','年租单价','租赁单价','租赁价格','元/月','元/天','元/日','元/年','租金/月'],quantity:['数量','工程量'],amount:['金额','总价','合价','金额(元)','合计金额','总价(元)','合计(元)'],source:['报价来源','来源文件'],sourceId:['报价文件标识'],business:['报价工作区'],libraryType:['价格库类型'],category:['项目类别','类别','分类'],chargeType:['计费方式','收费方式'],billingPeriod:['计租周期'],notes:['备注','说明','计费说明'],duration:['租期','租赁月数','租期(月)','租赁天数','租期(天)','租期(日)','租赁年数','租期(年)','租赁周期数']};
@@ -350,7 +351,9 @@ function invalidateDownload({keepPreview=false}={}){
  if(activeDownloadUrl){const old=activeDownloadUrl;activeDownloadUrl=null;setTimeout(()=>URL.revokeObjectURL(old),60000);$('download-ready').hidden=true;$('download-file').removeAttribute('href');exportStatus('清单或设置已更新，请重新导出。');}
 }
 async function run(id,action){
- const progressKind=id==='import'?'price':id==='quote'?'project':null;if(progressKind)taskProgress(progressKind,id==='import'?'正在读取报价文件':'正在读取新清单或方案');let succeeded=false;
+ const progressKind=id==='import'?'price':id==='quote'?'project':null;
+ if(progressKind){const input=$(id==='import'?'prices':'project');if(!input.files.length){actionStatus(progressKind,'请先点击“选择文件”，选中本机文件后再点击导入。',true);input.focus();return;}actionStatus(progressKind,'已收到文件，正在读取：'+input.files[0].name);taskProgress(progressKind,id==='import'?'正在读取报价文件':'正在读取新清单或方案');}
+ let succeeded=false;
  const controls=[$('import'),$('quote'),$('rematch'),$('export'),$('preview'),$('custom-import'),$('save-new-all')];controls.forEach(button=>button.disabled=true);
  const locked=['export','preview'].includes(id)?Array.from(document.querySelectorAll('#rows input,#rows select,#rows button,#add,#rematch,#tolerance,#tax-mode,#tax-rate,#discount-mode,#export-mode,#rental-period,#rental-duration,#rental-default-unit,#save-new-all,#custom-library input,#custom-library select,#custom-library button')).map(node=>({node,disabled:node.disabled})):[];
  locked.forEach(({node})=>node.disabled=true);
@@ -359,11 +362,18 @@ async function run(id,action){
  if(id==='preview')exportStatus('正在按原表计算预览，请稍候……');
  if(id==='export'){invalidateDownload({keepPreview:true});exportStatus('正在生成Excel文件，请稍候……');$('export').textContent='正在生成……';}
  notice('正在本机浏览器中处理文件，请稍候……');
- try{await initializeLibrary;await action();succeeded=true;}
- catch(error){const message=error.message||String(error);notice('处理失败：'+message);if(id==='custom-import'){customStatus('导入失败：'+message);$('custom-status').scrollIntoView({block:'nearest'});}if(['export','preview'].includes(id))exportStatus((id==='preview'?'预览失败：':'导出失败：')+message+'\n匹配结果已保留，可以修正设置后重试。',true);}
+ try{await initializeLibrary;await action();succeeded=true;if(progressKind){const lines=$('notice').textContent.split('\n');actionStatus(progressKind,lines.find(line=>/^导入 |^文件已读取|^\d+ 行项目/.test(line))||lines[0]);}}
+ catch(error){const message=error.message||String(error);notice('处理失败：'+message);if(progressKind)actionStatus(progressKind,'处理失败：'+message,true);if(id==='custom-import'){customStatus('导入失败：'+message);$('custom-status').scrollIntoView({block:'nearest'});}if(['export','preview'].includes(id))exportStatus((id==='preview'?'预览失败：':'导出失败：')+message+'\n匹配结果已保留，可以修正设置后重试。',true);}
  finally{finishProgress(progressKind,succeeded);$('price-catalog').inert=false;$('excel-preview').inert=false;controls.forEach(button=>button.disabled=false);locked.forEach(({node,disabled})=>node.disabled=disabled);if(id==='export')$('export').textContent='导出 Excel';}
 }
 function selected(id){return checkUpload($(id).files[0]);}
+for(const [id,kind]of [['prices','price'],['project','project']]){
+ const input=$(id),zone=input.closest('.card');
+ input.addEventListener('change',()=>{const file=input.files[0];actionStatus(kind,file?'已选择：'+file.name+'。点击下方按钮开始处理。':'尚未选择文件。',!file);});
+ zone.addEventListener('dragover',event=>{if(event.dataTransfer?.types?.includes('Files')){event.preventDefault();zone.classList.add('is-dragover');}});
+ zone.addEventListener('dragleave',event=>{if(!zone.contains(event.relatedTarget))zone.classList.remove('is-dragover');});
+ zone.addEventListener('drop',event=>{event.preventDefault();zone.classList.remove('is-dragover');if(!event.dataTransfer?.files?.length)return;try{input.files=event.dataTransfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));}catch(error){actionStatus(kind,'无法接收拖入的文件，请点击“选择文件”重试。',true);}});
+}
 function savePrices(next){const normalized=next.map(normalizeStoredQuote);localStorage.setItem(KEY,JSON.stringify(normalized));library=normalized;refresh();}
 function rematchAfterImport(){rows=rows.map(row=>['人工填写','人工确认库价','人工金额','新品报价已保存'].includes(row.status)?row:match(row));render();}
 function matchingReport(extra=''){
