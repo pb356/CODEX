@@ -77,7 +77,7 @@ export async function imageToExcel(file,{onProgress=()=>{},purpose='project'}={}
  onProgress({status:'读取图片',progress:0.03});const image=await pngImage(file);
  progressCallback=onProgress;
  let result;try{const instance=await worker();await instance.setParameters({tessedit_pageseg_mode:'6'});result=await instance.recognize(image.ocrBlob,{}, {text:true,tsv:true});}catch(error){throw Error('图片文字识别失败：'+(error.message||error));}
- const values=recognizedRows(result.data.tsv,image.grid);if(!values.length)throw Error('图片中没有识别到可用文字。请使用清晰、正向的表格截图。');
+ const values=recognizedRows(result.data.tsv,image.grid);if(!values.length)values.push(['未识别到文字，请对照原始图片核对。']);
  onProgress({status:'生成 Excel',progress:.91});
  const book=new ExcelJS.Workbook(),sheet=book.addWorksheet('识别清单');
  if(purpose==='project'&&values.length>1&&values[0].some(label=>/^(?:品种|名称|品类|植物名称|项目名称|材料名称)$/.test(label))){
