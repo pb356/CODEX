@@ -31,7 +31,6 @@ button,.link{transition:transform .18s,box-shadow .18s,background .18s}button:no
 .image-excel-link:hover{color:#134835}
 .action-status{min-height:20px;margin:12px 0 0;color:#286248;font-size:14px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .action-status[data-error="true"]{color:#a12e20;font-weight:650}
-.ai-settings{background:linear-gradient(115deg,#eef6f1,#f5f8f4);border:1px solid #d8e9df;border-radius:12px;padding:16px 18px;margin:15px 0 20px}.ai-settings .bar{margin-bottom:8px;align-items:flex-end}.ai-settings label{display:grid;gap:6px;font-size:13px;font-weight:650;color:#315b47}.ai-settings input,.ai-settings select{max-width:240px;min-width:185px;padding:9px 11px;border:1px solid #bfd6c7;border-radius:7px;background:#fff;color:#204733;font:inherit}.ai-settings input:disabled{opacity:.6}.ai-settings p{margin:7px 0 0;line-height:1.55}
 #notice{background:#eaf5ec;border:1px solid #d4ead9;color:#265745}
 details,.results{scroll-margin-top:24px}
 @keyframes star-drift{from{transform:translateX(-16%)}to{transform:translateX(155%)}}
