@@ -1,6 +1,7 @@
+import {createExcelPreview} from './excel-preview.js?v=original8';
 import {customKey,itemSpec,validateCustom,lineAmount} from './custom-items.js?v=preview7';
 import {PERIODS,periodFromText,rentalUnit,rentDuration} from './rental.js?v=dual6';
-import {fillOriginalXlsx} from './original-xlsx.js?v=preview7';
+import {fillOriginalXlsx} from './original-xlsx.js?v=original8';
 import {norm,specKey,unitKey,priceKey,matchPrice,priceEntries,quoteKey} from './pricing.js?v=preview7';
 import * as pdfjs from './vendor/pdf.mjs';
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf.worker.mjs', import.meta.url).href;
@@ -15,6 +16,7 @@ const customDrafts=new Map();
 let previewSnapshot=null;
 let library=[], rows=[];
 let originalProject=null;
+let originalPreview=null,previewTimer=null,previewVersion=0;
 let initializeLibrary=Promise.resolve();
 let activeDownloadUrl=null;
 function notice(text){$('notice').style.display='block';$('notice').textContent=text;}
@@ -66,7 +68,7 @@ async function table(file,{purpose='project'}={}){
   if(header<0)continue;
   if(!isIndoor&&periodFromText(raw[header][columns.price])&&/租|元[\/／]/.test(String(raw[header][columns.price])))throw Error('这份文件是按周期计价的租赁报价，请切换到室内植物租赁工作区导入。');
   if(isIndoor)for(let r=header+1;r<raw.length;r++){const label=raw[r].map(value=>String(value??'')).find(value=>/^实收(?:金额)?$/.test(value.trim()));if(label&&columns.amount!==undefined){const value=Number(raw[r][columns.amount]);if(Number.isFinite(value)&&String(raw[r][columns.amount]??'')!=='')rentalReceipts.push({sheet:name,value,row:r+1,period:periodFromText(raw[header][columns.price])||$('rental-period').value});}}
-  recognized++;layouts.push({sheet:name,headerRow:header+1,columns:{...columns}});
+  recognized++;layouts.push({sheet:name,headerRow:header+1,columns:{...columns},dimensions:dimensions.map(d=>({...d}))});
   raw.slice(header+1).forEach((r,index)=>{
    const item=Object.fromEntries(Object.entries(columns).map(([key,j])=>[key,String(r[j]??'').trim()]));item.line=`${name} 第${header+index+2}`;
    if(item.business&&item.business!==MODE)throw Error('这份备份属于'+(item.business==='indoor'?'室内租赁':'室外植物')+'工作区，请切换后再导入，避免混入当前价格库。');
@@ -176,12 +178,14 @@ function currentAmount(row){
 function updatePreviewTotals(){
  const amounts=rows.map(currentAmount),sum=amounts.reduce((sum,value)=>sum+(value??0),0),pending=amounts.filter(value=>value===null).length;
  $('summary').textContent=`共 ${rows.length} 项 · 已填价 ${rows.filter(row=>String(row.price??'')!=='').length} 项 · 缺金额 ${pending} 项`;
- $('preview-totals').textContent=previewSnapshot?`最终预览合计：¥${previewSnapshot.grand.toFixed(2)}${previewSnapshot.warnings.length?'；需核对：'+previewSnapshot.warnings.join('；'):''}`:`明细金额小计：¥${sum.toFixed(2)}${pending?`（${pending}项未定价，不是完整总价）`:''}。${originalProject?'原表折扣、税费、实收请点“预览最终报价”重新核算。':'税费在最终预览与导出时按设置计算。'}`;
+ $('preview-totals').textContent=previewSnapshot?`最终预览合计：¥${previewSnapshot.grand.toFixed(2)}${previewSnapshot.warnings.length?'；需核对：'+previewSnapshot.warnings.join('；'):''}`:`明细金额小计：¥${sum.toFixed(2)}${pending?`（${pending}项未定价，不是完整总价）`:''}。${originalProject?'正在按原表重新计算折扣、税费和实收，也可点击“预览最终报价”核算。':'税费在最终预览与导出时按设置计算。'}`;
 }
 function regularContains(row){return library.some(entry=>norm(entry.name)===norm(row.name)&&specKey(itemSpec(entry))===specKey(itemSpec(row))&&unitKey(entry.unit)===unitKey(isIndoor?rentalUnit(row.unit):row.unit));}
 function storedCustom(row){const entry=customFromRow(row);return customLibrary.find(existing=>customKey(existing)===customKey(entry));}
 function render({keepPreview=false}={}){
  const snapshot=previewSnapshot;invalidateDownload();previewSnapshot=keepPreview?snapshot:null;
+ $('standard-preview').hidden=!!originalProject;$('excel-preview').hidden=!originalProject;$('add').hidden=!!originalProject;
+ if(originalProject&&originalPreview){originalPreview.update(rows,originalOverlay());updatePreviewTotals();if(!keepPreview)scheduleOriginalCalculation();return;}
  $('rows').replaceChildren();$('empty').hidden=rows.length>0;
  rows.forEach((r,i)=>{
   const tr=document.createElement('tr');
@@ -231,12 +235,13 @@ async function run(id,action){
  const controls=[$('import'),$('quote'),$('export'),$('preview'),$('custom-import'),$('save-new-all')];controls.forEach(button=>button.disabled=true);
  const locked=['export','preview'].includes(id)?Array.from(document.querySelectorAll('#rows input,#rows select,#rows button,#add,#rematch,#tolerance,#tax-mode,#tax-rate,#discount-mode,#export-mode,#rental-period,#rental-duration,#rental-default-unit,#save-new-all,#custom-library input,#custom-library select,#custom-library button')).map(node=>({node,disabled:node.disabled})):[];
  locked.forEach(({node})=>node.disabled=true);
+ if(['export','preview'].includes(id))$('excel-preview').inert=true;
  if(id==='preview')exportStatus('正在按原表计算预览，请稍候……');
  if(id==='export'){invalidateDownload({keepPreview:true});exportStatus('正在生成Excel文件，请稍候……');$('export').textContent='正在生成……';}
  notice('正在本机浏览器中处理文件，请稍候……');
  try{await initializeLibrary;await action();}
  catch(error){const message=error.message||String(error);notice('处理失败：'+message);if(id==='custom-import'){customStatus('导入失败：'+message);$('custom-status').scrollIntoView({block:'nearest'});}if(['export','preview'].includes(id))exportStatus((id==='preview'?'预览失败：':'导出失败：')+message+'\n匹配结果已保留，可以修正设置后重试。',true);}
- finally{controls.forEach(button=>button.disabled=false);locked.forEach(({node,disabled})=>node.disabled=disabled);if(id==='export')$('export').textContent='导出 Excel';}
+ finally{$('excel-preview').inert=false;controls.forEach(button=>button.disabled=false);locked.forEach(({node,disabled})=>node.disabled=disabled);if(id==='export')$('export').textContent='导出 Excel';}
 }
 function selected(id){const file=$(id).files[0];if(!file)throw Error('请先选择文件。');if(file.size>20*1024*1024)throw Error('文件超过20MB，请拆分后上传。');return file;}
 function savePrices(next){localStorage.setItem(KEY,JSON.stringify(next));library=next;refresh();}
@@ -262,8 +267,8 @@ $('import').onclick=()=>run('import',async()=>{
 });
 $('quote').onclick=()=>run('quote',async()=>{
  const file=selected('project');let text='',warning='';
- if(/\.(xlsx|csv)$/i.test(file.name)){const data=await table(file);if(isIndoor&&data.items.some(row=>row.billingPeriod!==$('rental-period').value))throw Error('清单计租周期与当前设置不同，请先切换计租单位后重新读取。');originalProject=/\.xlsx$/i.test(file.name)?{buffer:await file.arrayBuffer(),filename:file.name,context:data}:null;rows=data.items.map(match);warning=matchingReport('植物、其他品类和原有报价均已完整保留，可在预览中修改。');showSourceTables(data.sourceTables);}
- else{text=await documentText(file);if(!text.trim())throw Error('没有可提取文字。扫描件和图片方案暂不支持，请使用文字版PDF/PPTX。');originalProject=null;$('source-rows').hidden=true;rows=extract(text);warning='方案提取为辅助草稿，词表外品种可能遗漏。数量不推断，规格未确认时价格留空；备选方案不可直接合并计量。请核对原文。';}
+ if(/\.(xlsx|csv)$/i.test(file.name)){const data=await table(file);if(isIndoor&&data.items.some(row=>row.billingPeriod!==$('rental-period').value))throw Error('清单计租周期与当前设置不同，请先切换计租单位后重新读取。');originalProject=/\.xlsx$/i.test(file.name)?{buffer:await file.arrayBuffer(),filename:file.name,context:data}:null;rows=data.items.map(match);warning=matchingReport('植物、其他品类和原有报价均已完整保留，可在预览中修改。');await mountOriginalPreview();}
+ else{text=await documentText(file);if(!text.trim())throw Error('没有可提取文字。扫描件和图片方案暂不支持，请使用文字版PDF/PPTX。');originalProject=null;await mountOriginalPreview();rows=extract(text);warning='方案提取为辅助草稿，词表外品种可能遗漏。数量不推断，规格未确认时价格留空；备选方案不可直接合并计量。请核对原文。';}
  $('rental-terms').hidden=!isIndoor||!originalProject?.context.rentalReceipts?.length;if(isIndoor&&originalProject?.context.rentalReceipts?.length)$('rental-terms').textContent='原表实收：'+originalProject.context.rentalReceipts.map(receipt=>receipt.value+'元/'+PERIODS[$('rental-period').value]).join('；')+'。保留固定价时按租期计算实收；选择按行求和则重新计算，不沿用旧实收。';
  $('export-mode').value=originalProject?'original':'standard';$('export-note').textContent=originalProject?'已保留原文件：'+originalProject.filename+'。原格式导出将填入原单价/金额列，并增加报价核对页。':'当前不是XLSX原表，将导出带金额和税费汇总的标准报价表。';$('original').hidden=!text;$('text').textContent=text;render();notice(warning);
 });
@@ -288,7 +293,7 @@ function saveBlob(blob,filename){
  link.click();
 }
 window.addEventListener('beforeunload',()=>{if(activeDownloadUrl)URL.revokeObjectURL(activeDownloadUrl);});
-for(const id of ['tax-mode','tax-rate','discount-mode','export-mode','rental-duration'])$(id).addEventListener('change',invalidateDownload);
+for(const id of ['tax-mode','tax-rate','discount-mode','export-mode','rental-duration'])$(id).addEventListener('change',()=>{invalidateDownload();if(originalProject){originalPreview?.update(rows,originalOverlay());scheduleOriginalCalculation();}});
 async function exportStandard(options){
  const book=new ExcelJS.Workbook(),sheet=book.addWorksheet(isIndoor?'室内租赁报价':'植物报价清单'),amountColumn=isIndoor?'G':'F';
  sheet.addRow(['植物品种','规格','单位','数量',isIndoor?PERIODS[$('rental-period').value]+'租金单价':'单价',...(isIndoor?['租赁'+PERIODS[$('rental-period').value]+'数']:[]),'金额','匹配状态','采用库规格','报价来源','参与报价数','原始平均价','备注','类别','计费方式']);let subtotal=0;
@@ -382,10 +387,60 @@ if(parent!==window){
  measure();
 }
 
-function showSourceTables(tables){
- $('source-rows').hidden=!tables?.length;$('source-tables').replaceChildren();
- for(const source of tables||[]){const heading=document.createElement('h3');heading.textContent=source.name;const table=document.createElement('table');for(const values of source.raw){const tr=document.createElement('tr');for(const value of values)cell(tr,value);table.append(tr);}$('source-tables').append(heading,table);}
+function previewAction(row){return {label:storedCustom(row)?'更新新品库':'一键加入新品库',disabled:(regularContains(row)&&!storedCustom(row))||(isIndoor&&row.isGift),title:(row.status||'')+' · '+(row.source||'')};}
+function originalOverlay(){
+ const values={};const put=(sheet,address,value)=>{(values[sheet]??={})[address]=value;};
+ for(const row of rows){if(!row._origin)continue;const origin=row._origin,columns=originalProject?.context.previewColumns?.[origin.sheet]||origin.columns,r=origin.row,sheet=origin.sheet;
+  for(const field of ['name','spec','unit','quantity','price','notes','duration'])if(columns[field]!==undefined){const column=field==='name'?(origin.nameColumn??columns.name):columns[field];let value=row[field]??'';if(['quantity','price','duration'].includes(field)&&String(value).trim()!==''&&Number.isFinite(Number(value)))value=Number(value);if(field==='duration'&&isIndoor&&row.chargeType==='once')value='';put(sheet,excelAddress(column,r),value);}
+  if(columns.amount!==undefined)put(sheet,excelAddress(columns.amount,r),currentAmount(row));
+  for(const field of row._extras||[])if(field.dirty)put(sheet,excelAddress(field.column,r),field.value);
+ }
+ // Formula results and explicit edits have the final say over provisional line values.
+ for(const [sheet,cells]of Object.entries(previewSnapshot?.cellValues||{}))Object.assign(values[sheet]??={},cells);
+ for(const edit of originalProject?.context.cellEdits||[])if(!edit.formula)put(edit.sheet,edit.address,edit.value);
+ return values;
 }
+function excelAddress(column,row){let n=column+1,name='';for(;n;n=Math.floor((n-1)/26))name=String.fromCharCode(65+(n-1)%26)+name;return name+row;}
+async function mountOriginalPreview(){
+ clearTimeout(previewTimer);previewVersion++;originalPreview?.dispose();originalPreview=null;
+ if(!originalProject)return;
+ const project=originalProject;
+ originalPreview=await createExcelPreview($('excel-preview'),project.buffer,{
+  context:project.context,actionState:previewAction,
+  onAdd:row=>{try{upsertCustomRows([row]);row.status='新品报价已保存';originalPreview.update(rows,originalOverlay());notice('已加入独立新品类库，可在下方价格库中继续编辑。');}catch(error){notice(error.message);$('notice').scrollIntoView({block:'nearest'});}},
+  onEdit:change=>{if(originalProject!==project)return;editOriginalCell(change);}
+ });
+}
+function editOriginalCell({sheet,address,text,cell}){
+ const project=originalProject;if(!project)return;
+ const trimmed=text.trim(),numeric=trimmed!==''&&/^[+-]?(?:\d[\d,]*\.?\d*|\.\d+)\s*%?$/.test(trimmed);
+ let value=numeric?Number(trimmed.replace(/[,%\s]/g,''))*(trimmed.endsWith('%')?.01:1):text;
+ const formula=trimmed.startsWith('=')?trimmed.slice(1):null;
+ const row=rows.find(row=>row._origin?.sheet===sheet&&row._origin.row===Number(address.match(/\d+/)[0]));
+ const columns=row?(project.context.previewColumns?.[sheet]||row._origin.columns):{};
+ const field=row?Object.keys(columns).find(key=>excelAddress(key==='name'?(row._origin.nameColumn??columns.name):columns[key],row._origin.row)===address):null;
+ if(formula&&row&&['quantity','price','duration'].includes(field)){notice('数量、单价和租期请填写数值；金额或汇总单元格可输入公式。');originalPreview.update(rows,originalOverlay());return;}
+ project.context.cellEdits=(project.context.cellEdits||[]).filter(edit=>edit.sheet!==sheet||edit.address!==address);
+ if(row&&field&&['name','spec','unit','quantity','price','amount','notes','duration'].includes(field)&&!formula){
+  if(field==='amount'){row.amountOverride=value;row._manualAmount=true;row.status='人工金额';}
+  else{row[field]=String(value);if(field==='name'&&row._origin.nameColumn===columns.notes)row.notes=String(value);if(['name','spec','unit'].includes(field)){row.price='';row._importedPrice='';row.source='';row.matchedQuotes=[];row.quoteCount=0;row.matchedSpec='';row.averagePrice=null;row.status='已修改，待重新匹配';}if(['quantity','price','duration'].includes(field)){delete row.amountOverride;row._manualAmount=false;}if(field==='price'){row.status='人工填写';row.source='人工填写';row.quoteCount=0;row.matchedQuotes=[];}if(field==='notes'&&isIndoor)row.isGift=/赠送|赠品|免租/.test(row.notes);}
+ }else{
+  project.context.cellEdits.push({sheet,address,value,formula});
+  const dimensions=project.context.layouts.find(layout=>layout.sheet===sheet)?.dimensions||[];
+  const changedDimension=row&&dimensions.find(d=>excelAddress(d.index,row._origin.row)===address);
+  if(changedDimension&&!formula){const extra=row._extras?.find(field=>field.column===changedDimension.index);if(extra){extra.value=String(value);extra.dirty=true;}row.spec=dimensions.map(d=>{const v=String(row._extras?.find(field=>field.column===d.index)?.value||'').trim();return v?d.label+v+(/(?:cm|厘米|m|米)$/i.test(v)?'':d.unit):'';}).filter(Boolean).join(' ');row.price='';row._importedPrice='';row.status='已修改规格，待重新匹配';row.matchedQuotes=[];row.quoteCount=0;}
+ }
+ invalidateDownload();previewVersion++;originalPreview.update(rows,originalOverlay());updatePreviewTotals();scheduleOriginalCalculation();
+}
+function scheduleOriginalCalculation(){
+ clearTimeout(previewTimer);const version=++previewVersion,project=originalProject;if(!project||rows.some(row=>!row._origin))return;
+ previewTimer=setTimeout(async()=>{
+  try{const result=await fillOriginalXlsx(project.buffer,rows,project.context,{...financialOptions(),previewOnly:true});if(version!==previewVersion||project!==originalProject)return;
+   previewSnapshot={grand:result.grand,warnings:[...result.warnings,...(result.missing?[`还有${result.missing}项未定价，此合计不完整`]:[])],lines:result.lines,cellValues:result.cellValues};originalPreview.update(rows,originalOverlay());updatePreviewTotals();
+  }catch(error){if(version===previewVersion){$('preview-totals').textContent='原表预览待核对：'+error.message+'。编辑内容已保留，可修正后重新预览。';}}
+ },350);
+}
+
 function customFromRow(row){
  const chargeType=row.chargeType||(row.category==='other'?'once':'recurring');
  return {id:row._customEntryId||row.id||'',name:String(row.name||'').trim(),spec:String(row.spec||'').trim(),unit:isIndoor?rentalUnit(row.unit):String(row.unit||'').trim(),price:String(row.price??'').trim(),category:row.category||'plant',chargeType,billingPeriod:isIndoor?(chargeType==='once'?'once':periodFromText(row.billingPeriod)||$('rental-period').value):'',business:MODE,notes:row.notes||'',source:'新品类库',isGift:row.isGift||false};
@@ -425,10 +480,10 @@ $('custom-import').onclick=()=>run('custom-import',async()=>{
  const file=selected('custom-file'),data=await table(file,{purpose:'custom'});upsertCustomRows(data.items);rematchAfterImport();customStatus('已导入新品类库，普通植物库保留；重复记录按本次单价更新。');
 });
 $('preview').onclick=()=>run('preview',async()=>{
- if(!rows.length)throw Error('请先读取清单。');const options=financialOptions();
- if(originalProject&&rows.every(row=>row._origin)){const result=await fillOriginalXlsx(originalProject.buffer,rows,originalProject.context,options);previewSnapshot={grand:result.grand,warnings:[...result.warnings,...(result.missing?[`还有${result.missing}项未定价，此合计不完整`]:[])],lines:result.lines};}
+ if(!rows.length)throw Error('请先读取清单。');clearTimeout(previewTimer);previewVersion++;const options=financialOptions();
+ if(originalProject&&rows.every(row=>row._origin)){const result=await fillOriginalXlsx(originalProject.buffer,rows,originalProject.context,{...options,previewOnly:true});previewSnapshot={grand:result.grand,warnings:[...result.warnings,...(result.missing?[`还有${result.missing}项未定价，此合计不完整`]:[])],lines:result.lines,cellValues:result.cellValues};}
  else{const values=rows.map(row=>lineAmount(row,{indoor:isIndoor,duration:$('rental-duration').value})),subtotal=values.reduce((sum,value)=>sum+(value??0),0),rate=options.taxMode==='included'?0:options.taxRate||0;previewSnapshot={grand:Math.round(subtotal*(1+rate/100)*100)/100,warnings:[...(values.some(value=>value===null)?['仍有项目缺少金额，此合计不完整']:[]),...(originalProject?['含新增项目，当前为明细预览；原表固定折扣/实收未套用，可选择标准表导出']:[])],lines:[]};}
- render({keepPreview:true});notice('最终预览已更新，可继续手动编辑；编辑后请重新点击预览以更新原表折扣和税费。');
+ render({keepPreview:true});notice('最终预览已更新。可直接在原表单元格中编辑，金额和汇总会自动更新。');
 });
 $('custom-title').textContent=(isIndoor?'室内租赁':'室外')+' · 新品类价格库';
 renderCustomLibrary();

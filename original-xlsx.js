@@ -1,4 +1,4 @@
-import {PERIODS,rentDuration} from './rental.js?v=dual6';
+import {PERIODS,rentDuration,periodFromText} from './rental.js?v=dual6';
 import {calculateFormula,columnName,columnNumber} from './formulas.js?v=auto4';
 const NS='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const REL='http://schemas.openxmlformats.org/package/2006/relationships';
@@ -9,7 +9,7 @@ const child=(root,name)=>Array.from(root.children).find(node=>node.localName===n
 const serialize=doc=>new XMLSerializer().serializeToString(doc);
 const number=value=>{const text=String(value??'').replace(/[,￥¥]/g,'').trim();return text!==''&&Number.isFinite(Number(text))?Number(text):null;};
 const money=value=>Math.round((value+Number.EPSILON)*100)/100;
-export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',taxRate=null,discountMode='preserve',rental=null}={}){
+export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',taxRate=null,discountMode='preserve',rental=null,previewOnly=false}={}){
  if(rows.some(row=>!row._origin))throw Error('新增行没有原表位置，请先在原Excel中添加对应行，或选择“标准表”导出。');
  if(taxMode==='add'&&(taxRate===null||!Number.isFinite(taxRate)||taxRate<0||taxRate>100))throw Error('请指定有效税率。');
  const zip=await JSZip.loadAsync(buffer),warnings=[],workbook=xml(await zip.file('xl/workbook.xml').async('string'));
@@ -59,6 +59,8 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
   const sharedFormulas=Array.from(book.cells.values()).filter(cell=>child(cell,'f')?.getAttribute('t')==='shared').map(cell=>({cell,formula:formulaFor(book,cell)}));
   for(const {cell,formula} of sharedFormulas)if(formula){const f=child(cell,'f');f.textContent=formula;for(const attribute of ['t','si','ref'])f.removeAttribute(attribute);book.changed=true;}
  }
+ // Read edited tax rates, labels, and source formulas when constructing calculations.
+ for(const edit of context.cellEdits||[]){const book=books.get(edit.sheet);if(!book||!/^[A-Z]+\d+$/.test(edit.address))throw Error('原表编辑位置无效');write(book,edit.address,edit.formula?null:edit.value,{formula:edit.formula??null});}
  const originKeys=new Set(rows.map(row=>row._origin.sheet+'!'+row._origin.row));
  let missing=0;const summaries=[];
  for(const layout of context.layouts){
@@ -68,7 +70,7 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
   const at=(field,r)=>columnName(columns[field]+1)+r;
   const styles=book.cells.get(at('price',layout.headerRow+1))?.getAttribute('s');
   const active=rows.filter(row=>row._origin.sheet===layout.sheet);
-  if(rental){write(book,at('price',layout.headerRow),PERIODS[rental.period]+'租金单价');write(book,at('duration',layout.headerRow),'租期('+PERIODS[rental.period]+')');}
+  if(rental){const originalPeriod=periodFromText(textValue(book.cells.get(at('price',layout.headerRow))));if(originalPeriod&&originalPeriod!==rental.period)write(book,at('price',layout.headerRow),PERIODS[rental.period]+'租金单价');write(book,at('duration',layout.headerRow),'租期('+PERIODS[rental.period]+')');}
   let replacedRentalFormula=false;
   for(const row of active){
    const origin=row._origin,r=origin.row;
@@ -164,6 +166,8 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
   summaries.push({sheet:layout.sheet,address:totalAddress,rate:originalRate,extraRate});
   const dimension=nodes(book.doc,'dimension')[0];if(dimension){const addresses=[...book.cells.keys()];dimension.setAttribute('ref',`A1:${columnName(Math.max(...addresses.map(columnNumber)))}${Math.max(...addresses.map(a=>Number(a.match(/\d+/)[0])))}`);}
  }
+ // Apply explicit preview edits before calculating dependent formulas.
+ for(const edit of context.cellEdits||[]){const book=books.get(edit.sheet);if(!book||!/^[A-Z]+\d+$/.test(edit.address))throw Error('原表编辑位置无效');write(book,edit.address,edit.formula?null:edit.value,{formula:edit.formula??null});}
  const cache=new Map(),busy=new Set(),unsupported=new Set();
  function read(sheet,address){
   const id=sheet+'!'+address;if(cache.has(id))return cache.get(id);if(busy.has(id))throw Error('循环引用');
@@ -181,6 +185,9 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
  }
  if(unsupported.size)warnings.push(`${unsupported.size} 个复杂/共享公式已保留并清除旧缓存，需在Excel打开时自动重算。`);
  let grand=0;for(const summary of summaries){try{const value=Number(read(summary.sheet,summary.address));if(!Number.isFinite(value))throw Error('合计不是数值');summary.total=money(value);grand+=summary.total;}catch{summary.total='打开Excel后重算';warnings.push(`${summary.sheet}合计尚不能确定，请在Excel打开重算后核对。`);}}
+ const lines=rows.map(row=>{const layout=context.layouts.find(layout=>layout.sheet===row._origin.sheet);let amount=null;const book=books.get(row._origin.sheet);let column=layout.columns.amount;if(column===undefined){const header=nodes(book.doc,'row').find(node=>Number(node.getAttribute('r'))===layout.headerRow);const cell=header&&Array.from(header.children).find(cell=>textValue(cell)==='金额');if(cell)column=columnNumber(cell.getAttribute('r'))-1;}try{if(column!==undefined){const value=read(row._origin.sheet,columnName(column+1)+row._origin.row);amount=value===''||!Number.isFinite(Number(value))?null:Number(value);}}catch{}return {sheet:row._origin.sheet,row:row._origin.row,amount};});
+ const cellValues={};for(const [sheet,book]of books){cellValues[sheet]={};for(const address of book.cells.keys()){try{cellValues[sheet][address]=unsupported.has(sheet+'!'+address)?null:read(sheet,address);}catch{cellValues[sheet][address]=null;}}}
+ if(previewOnly)return {lines,cellValues,warnings,missing,grand:money(grand)};
  const audit=[['报价计算与核对','说明'],['计价状态',missing?`不完整：${missing}行缺单价或数量，总价仅供核对`:'本次植物行均已填写单价与数量'],...(rental?[['租赁计价口径','数量×每'+PERIODS[rental.period]+'单价×租期；默认租期'+rental.duration+PERIODS[rental.period]+'，逐行租期优先']]:[]),['原表固定折后价处理',discountMode==='preserve'?'沿用原固定价，出现时须人工核对':'按更新行金额求和，不应用原固定折扣'],['税费口径',taxMode==='original'?'沿用原表税费，不重复加税':taxMode==='included'?'库价已含税，不额外加税':`未税价加税，税率${taxRate}%`],...summaries.flatMap(s=>[[s.sheet+'合计',s.total],[s.sheet+'新增税率',s.extraRate?(s.extraRate*100)+'%':'未额外加税']]),['各清单合计汇总（非跨表去重）',money(grand)],...warnings.map(w=>['需核对',w]),[],['植物品种','目标规格','数量','最终单价','采用库规格','匹配方式','报价来源','参与报价数','原始平均价','备注','项目类别','计费方式','手动或原行固定金额']];
  for(const row of rows)audit.push([row.name,row.spec,row.quantity,row.price,(row.matchedName||'')+' '+(row.matchedSpec||''),row.status,row.source,row.quoteCount||0,row.averagePrice??'',row.notes||'',row.category||'plant',row.chargeType||'',row.amountOverride??'']);
  audit.push([],['匹配报价明细','目标规格','库中名称','库中规格','库中单价','来源']);for(const row of rows)for(const quote of row.matchedQuotes||[])audit.push([row.name,row.spec,quote.name,quote.spec,Number(quote.price),quote.source]);
@@ -196,6 +203,6 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
  let calc=nodes(workbook,'calcPr')[0];if(!calc){calc=make(workbook,'calcPr');const after=Array.from(workbook.documentElement.children).find(node=>['oleSize','customWorkbookViews','pivotCaches','smartTagPr','smartTagTypes','webPublishing','fileRecoveryPr','webPublishObjects','extLst'].includes(node.localName));workbook.documentElement.insertBefore(calc,after||null);}calc.setAttribute('calcMode','auto');calc.setAttribute('fullCalcOnLoad','1');calc.setAttribute('forceFullCalc','1');
  for(const book of books.values())if(book.changed)zip.file(book.path,serialize(book.doc));
  zip.file('xl/workbook.xml',serialize(workbook));zip.file('xl/_rels/workbook.xml.rels',serialize(relationships));zip.file('[Content_Types].xml',serialize(contentTypes));
- const lines=rows.map(row=>{const layout=context.layouts.find(layout=>layout.sheet===row._origin.sheet);let amount=null;const book=books.get(row._origin.sheet);let column=layout.columns.amount;if(column===undefined){const header=nodes(book.doc,'row').find(node=>Number(node.getAttribute('r'))===layout.headerRow);const cell=header&&Array.from(header.children).find(cell=>textValue(cell)==='金额');if(cell)column=columnNumber(cell.getAttribute('r'))-1;}try{if(column!==undefined){const value=read(row._origin.sheet,columnName(column+1)+row._origin.row);amount=value===''||!Number.isFinite(Number(value))?null:Number(value);}}catch{}return {sheet:row._origin.sheet,row:row._origin.row,amount};});
+
  return {lines,blob:await zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),warnings,missing,grand:money(grand)};
 }

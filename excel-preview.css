@@ -1,0 +1,9 @@
+#excel-preview[hidden],.excel-canvas[hidden]{display:none!important}
+.excel-tabs{display:flex;gap:6px;margin:10px 0}.excel-tabs[hidden]{display:none}.excel-tabs button[aria-selected=true]{background:#276448;color:white}
+.excel-scroll{max-height:780px;overflow:auto;background:#f0f2ef;border:1px solid #cfd8ce;position:relative;overscroll-behavior:contain}
+.excel-canvas{position:relative;background:linear-gradient(to right,#fff var(--sheet-width),#f5f8f3 var(--sheet-width));isolation:isolate;min-height:100px}
+.excel-cell{position:absolute;display:flex;padding:0;border-right:1px solid #e6e6e6;border-bottom:1px solid #e6e6e6;overflow:hidden;box-sizing:border-box;background:#fff;line-height:normal;color:#000}
+.excel-value{width:100%;min-height:1em;max-height:100%;padding:1px 3px;outline:0;overflow:hidden;cursor:text;tab-size:4;line-height:normal}
+.excel-cell:focus-within{outline:2px solid #278650;outline-offset:-2px;z-index:4}.excel-cell.editing{overflow:visible}.excel-cell.editing .excel-value{background:#f3fff5;min-height:100%;max-height:none;white-space:pre-wrap!important;position:relative;z-index:5;box-shadow:0 2px 6px #0002}
+.excel-picture{position:absolute;overflow:hidden;pointer-events:none;z-index:2}.excel-picture img{position:absolute;max-width:none;max-height:none;object-fit:fill}
+.excel-bank{position:absolute;width:152px;padding:0 6px;min-height:0;font:12px system-ui,sans-serif;white-space:nowrap;z-index:3}.excel-bank:disabled{cursor:default;opacity:.55}
