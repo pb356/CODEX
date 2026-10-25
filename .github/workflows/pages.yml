@@ -34,7 +34,7 @@ jobs:
           python - <<'PY'
           import os, time, urllib.request
           root = os.environ['SITE_URL'].rstrip('/') + '/'
-          checks = [('', '自动使用左侧价格库填价'), ('app.js?v=20261025-pricing2', 'recoverLegacyPrices'), ('pricing.js', 'matchPrice'), ('vendor/pdf.mjs', 'pdfjsVersion')]
+          checks = [('', 'export-mode'), ('app.js?v=20261025-auto4', 'fillOriginalXlsx'), ('pricing.js?v=auto4', 'roundAveragePrice'), ('original-xlsx.js?v=auto4', '报价计算核对'), ('formulas.js?v=auto4', 'calculateFormula'), ('vendor/pdf.mjs', 'pdfjsVersion')]
           for path, marker in checks:
               for attempt in range(10):
                   try:
