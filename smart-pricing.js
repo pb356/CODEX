@@ -10,7 +10,15 @@ function singleSize(spec){
  const key=specKey(spec);if(!key.startsWith('dimensions:'))return null;
  const parts=key.slice(11).split('|');if(parts.length!==1)return null;
  const [dimension,value]=parts[0].split(':');const [low,high=low]=value.split('-').map(Number);
- return Number.isFinite(low)&&Number.isFinite(high)?{dimension,low,high}:null;
+ return Number.isFinite(low)&&Number.isFinite(high)?{dimension,low,high,explicitUnit:/(?:mm|毫米|cm|厘米|米|m)(?:\s|$|[-~～])/i.test(String(spec))}:null;
+}
+function intervalMatch(a,b,tolerance){
+ const pointA=a.low===a.high,pointB=b.low===b.high;
+ if(pointA&&a.low>=b.low&&a.low<=b.high||pointB&&b.low>=a.low&&b.low<=a.high)return true;
+ if(a.low>=b.low&&a.high<=b.high||b.low>=a.low&&b.high<=a.high)return true;
+ const gap=Math.max(a.low-b.high,b.low-a.high,0);
+ if(gap>0)return gap/Math.max(a.high,b.high,1)<=tolerance;
+ return Math.abs((a.low+a.high)/2-(b.low+b.high)/2)/Math.max((a.low+a.high+b.low+b.high)/4,1)<=tolerance;
 }
 function compatibleSpec(row,quote,tolerance){
  const requested=String(row.spec||'').trim(),available=String(quote.spec||'').trim();
@@ -18,15 +26,21 @@ function compatibleSpec(row,quote,tolerance){
  if(specKey(requested)===specKey(available))return '同规格';
  const distance=specificationDistance(requested,available);
  if(distance&&(distance.contained||distance.score<=tolerance+1e-9))return distance.contained?'范围内':'相近规格';
- // A short foliage-plant label can describe overall size as H or D. Restrict
- // this equivalence to the known 绿萝 alias; chest diameter of trees is not height.
- if(plantNameKey(row.name)==='绿萝'){
-  const a=singleSize(requested),b=singleSize(available);
-  if(a&&b&&['h','d','s'].includes(a.dimension)&&['h','d','s'].includes(b.dimension)){
-   const score=Math.max(Math.abs(a.low-b.low)/Math.max(b.low,1),Math.abs(a.high-b.high)/Math.max(b.high,1));
-   if(score<=tolerance+1e-9)return '绿萝尺寸写法';
-  }
- }
+ const a=singleSize(requested),b=singleSize(available);
+ if(!a||!b)return false;
+ // A single 0.25 without a unit is common for 0.25 m in planting lists.
+ // Only infer metres when the other side is at least 10 cm; explicit units
+ // always win. This is applied only after the plant name has matched.
+ let inferredMetres=false;
+ if(!a.explicitUnit&&a.high>0&&a.high<=3&&b.low>=10){a.low*=100;a.high*=100;inferredMetres=true;}
+ else if(!b.explicitUnit&&b.high>0&&b.high<=3&&a.low>=10){b.low*=100;b.high*=100;inferredMetres=true;}
+ // H, D, L and an unlabelled size can denote overall height/diameter for
+ // potted foliage. On trees sold by 株, D may mean trunk diameter: keep the
+ // dimension distinction there unless the species is a known foliage alias.
+ const potted=['盆','组'].includes(unitKey(row.unit))||['盆','组'].includes(unitKey(quote.unit))||/^(绿萝|虎皮兰|吊兰|白掌|红掌|金钱树|龟背竹|竹芋)$/.test(plantNameKey(row.name));
+ const unlabelled=(a.dimension==='s'||b.dimension==='s')&&['h','l','s'].includes(a.dimension)&&['h','l','s'].includes(b.dimension);
+ if(a.dimension!==b.dimension&&(!(potted||unlabelled)||!['h','d','l','s'].includes(a.dimension)||!['h','d','l','s'].includes(b.dimension)||Math.max(a.high,b.high)>150))return false;
+ if(intervalMatch(a,b,tolerance))return inferredMetres?'米与厘米换算':a.dimension===b.dimension?'规格范围重叠':'盆栽尺寸写法';
  return false;
 }
 export function smartMatchPrice(row,library,{tolerance=.1}={}){
