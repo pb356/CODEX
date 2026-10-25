@@ -1,0 +1,36 @@
+:root{background:#f3f6f3;color:#18372e}
+body{background:radial-gradient(circle at 14% 4%,#e5f3e7 0,transparent 31%),radial-gradient(circle at 90% 18%,#eaf1f5 0,transparent 31%),#f5f7f4}
+.switcher{background:linear-gradient(110deg,#122e2d,#245d45);border:0;box-shadow:0 8px 28px #122f2940;color:#f3fcf4}
+.switcher .brand{letter-spacing:.035em}.switcher .hint{color:#c8e4d0}.switcher .tabs{background:#ffffff1c}.switcher .tabs button{color:#def3e3}.switcher .tabs button[aria-selected=true]{background:#f2faf1;color:#1b5d41;box-shadow:0 3px 10px #071f1b38}
+header{background:linear-gradient(115deg,#112b2c 0%,#1d5140 68%,#2a674d 100%);box-shadow:0 12px 34px #173d2d23;padding-top:30px;padding-bottom:30px}
+header b{letter-spacing:.035em}header .pill{background:#ffffff14;color:#eff9ef;border-color:#ffffff5c;backdrop-filter:blur(8px)}
+main>.step{color:#31715a;font-weight:700;letter-spacing:.16em;margin-bottom:7px}
+h1{font-size:clamp(30px,3.2vw,42px);letter-spacing:-.035em;color:#153d32;margin-top:8px}
+main>p{font-size:17px;color:#607e6b;margin-bottom:26px}
+.cards{align-items:stretch;gap:22px;margin:28px 0 30px}
+.card,.results{border:1px solid #dce8df;box-shadow:0 14px 42px #1742320b;background:#ffffffec}
+.cards .card{position:relative;overflow:hidden;min-height:290px;padding:27px 28px}
+.cards .card:before{content:"";position:absolute;left:0;top:0;right:0;height:4px;background:linear-gradient(90deg,#2b7753,#8ec1a0 60%,#d9ead9)}
+.cards .step{font-size:12px;color:#43896b;letter-spacing:.13em;font-weight:700}
+.cards h2{font-size:22px;letter-spacing:-.03em;margin:6px 0 18px}
+.format-only{color:#557367;font-size:14px;line-height:1.5;background:#f2f7f2;border:1px solid #dbeade;border-radius:9px;padding:10px 12px;margin:0 0 18px;min-height:43px}
+input[type=file]{border:1px dashed #a9cbb7;background:#f8fbf8;border-radius:10px;margin:0 0 19px;transition:border-color .2s,background .2s}
+input[type=file]:hover,input[type=file]:focus-visible{border-color:#388967;background:#f1f9f2}
+input[type=file]::file-selector-button{background:#e5f1e8;border:0;border-radius:6px;color:#225e43;padding:9px 13px;margin-right:10px;cursor:pointer;font-weight:650}
+button,.link{transition:transform .18s,box-shadow .18s,background .18s}button:not(:disabled):hover,.link:hover{transform:translateY(-2px);box-shadow:0 5px 12px #255b3f25}
+.cards button:not(.secondary){background:linear-gradient(115deg,#1c6347,#277d59);font-weight:700}
+.cards .secondary{background:#eaf2ea}
+.task-progress{margin-top:18px;padding:13px 14px;border-radius:11px;background:#f0f5f6;border:1px solid #d8e5e5;color:#245b5b;max-width:100%}
+.task-progress-track{height:12px;border-radius:20px;background:#152843;overflow:hidden;position:relative;box-shadow:inset 0 1px 4px #08142694}
+.task-progress-fill{display:block;width:var(--progress,32%);height:100%;border-radius:inherit;background:linear-gradient(90deg,#176457,#3da8ac 58%,#b6e2c7);box-shadow:0 0 20px #53c3b880;transition:width .35s ease;position:relative;z-index:1}
+.task-progress.is-indeterminate .task-progress-fill{width:43%;animation:star-drift 1.8s ease-in-out infinite alternate}
+.task-stars{position:absolute;inset:0;z-index:2;pointer-events:none;background-image:radial-gradient(circle,#fff 0 1px,transparent 1.6px),radial-gradient(circle,#d9fff0 0 1.5px,transparent 2px),radial-gradient(circle,#b7dbff 0 1px,transparent 1.6px);background-size:41px 11px,67px 12px,97px 12px;background-position:0 2px,13px 6px,28px 1px;animation:stars-flow 2.8s linear infinite;opacity:.95}
+.task-progress-label{display:block;margin-top:8px;font-size:13px;font-weight:650}
+.image-excel-link{display:inline-block;margin-top:13px;color:#246d59;text-decoration:underline;text-underline-offset:3px;font-size:13px;font-weight:700}
+.image-excel-link:hover{color:#134835}
+#notice{background:#eaf5ec;border:1px solid #d4ead9;color:#265745}
+details,.results{scroll-margin-top:24px}
+@keyframes star-drift{from{transform:translateX(-16%)}to{transform:translateX(155%)}}
+@keyframes stars-flow{from{background-position:0 2px,13px 6px,28px 1px}to{background-position:164px 2px,214px 6px,222px 1px}}
+@media(max-width:720px){.cards .card{min-height:0;padding:22px}.cards{gap:16px}.format-only{min-height:0}header{padding-top:23px;padding-bottom:23px}}
+@media(prefers-reduced-motion:reduce){.task-progress.is-indeterminate .task-progress-fill,.task-stars{animation:none}button,.link{transition:none}}
