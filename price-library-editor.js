@@ -1,9 +1,9 @@
-import {priceEntries,quoteKey,categoryOf} from './pricing.js?v=flex10';
+import {priceEntries,quoteKey,categoryOf} from './pricing.js?v=flex11';
 import {PERIODS,rentalUnit} from './rental.js?v=dual6';
-import {createExcelPreview} from './excel-preview.js?v=flex10';
-import {fillOriginalXlsx} from './original-xlsx.js?v=flex10';
-import {editWorkbook} from './workbook-edits.js?v=flex10';
-import {loadPriceFiles,storePriceFile} from './library-files.js?v=flex10';
+import {createExcelPreview} from './excel-preview.js?v=flex11';
+import {fillOriginalXlsx} from './original-xlsx.js?v=flex11';
+import {editWorkbook} from './workbook-edits.js?v=flex11';
+import {loadPriceFiles,storePriceFile} from './library-files.js?v=flex11';
 const $=id=>document.getElementById(id);
 const groupKey=row=>row.sourceId?'id:'+row.sourceId:'name:'+(row.source||'历史报价');
 const address=(column,row)=>{let n=column+1,name='';for(;n;n=Math.floor((n-1)/26))name=String.fromCharCode(65+(n-1)%26)+name;return name+row;};

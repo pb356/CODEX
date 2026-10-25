@@ -1,9 +1,9 @@
-import {initPriceLibraryEditor} from './price-library-editor.js?v=flex10';
-import {createExcelPreview} from './excel-preview.js?v=flex10';
-import {customKey,itemSpec,validateCustom,lineAmount} from './custom-items.js?v=flex10';
+import {initPriceLibraryEditor} from './price-library-editor.js?v=flex11';
+import {createExcelPreview} from './excel-preview.js?v=flex11';
+import {customKey,itemSpec,validateCustom,lineAmount} from './custom-items.js?v=flex11';
 import {PERIODS,periodFromText,rentalUnit,rentDuration} from './rental.js?v=dual6';
-import {fillOriginalXlsx} from './original-xlsx.js?v=flex10';
-import {norm,specKey,unitKey,priceKey,matchPrice,priceEntries,quoteKey,categoryOf} from './pricing.js?v=flex10';
+import {fillOriginalXlsx} from './original-xlsx.js?v=flex11';
+import {norm,specKey,unitKey,priceKey,matchPrice,priceEntries,quoteKey,categoryOf} from './pricing.js?v=flex11';
 import * as pdfjs from './vendor/pdf.mjs';
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf.worker.mjs', import.meta.url).href;
 const $ = id => document.getElementById(id);
@@ -130,7 +130,8 @@ async function table(file,{purpose='project'}={}){
    const reference=[...customLibrary,...library].find(entry=>norm(entry.name)===norm(item.name));
    const plantHeader=/植物|苗木|品种/.test(String(headerValues[columns.name]||''));
    const explicitCategory=/^(other|其他|其它|其他品类|其它品类|材料|人工|费用|服务|配件|非植物|plant|植物)$/.test(norm(item.category));
-   item.category=explicitCategory?categoryOf(item):!primaryName?'other':categoryOf({...item,unit:'',category:undefined})==='other'?'other':stored?.category||reference?.category||(vocabulary.includes(item.name)||/^(株|棵|盆)$/.test(item.unit||'')?'plant':categoryOf({...item,category:undefined})==='other'?'other':plantHeader?'plant':'other');
+   const dimensionalPlant=/(?:^|\|)[hpdg]:/.test(specKey(item.spec).replace(/^dimensions:/,''));
+   item.category=explicitCategory?categoryOf(item):!primaryName?'other':categoryOf({...item,unit:'',category:undefined})==='other'?'other':stored?.category||reference?.category||(vocabulary.includes(item.name)||/^(株|棵|盆)$/.test(item.unit||'')||dimensionalPlant?'plant':categoryOf({...item,category:undefined})==='other'?'other':plantHeader?'plant':'other');
    item.chargeType=norm(item.chargeType)==='once'||/一次|单次/.test(item.chargeType||'')?'once':/周期|recurring/.test(item.chargeType||'')?'recurring':stored?.chargeType||reference?.chargeType||(item.category==='other'?'once':'recurring');
    if(isIndoor&&item.chargeType==='once')item.billingPeriod='once';
    item._importedPrice=item.price;

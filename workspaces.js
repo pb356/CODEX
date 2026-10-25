@@ -6,7 +6,7 @@ function switchMode(mode){
  for(const name of modes){
   const selected=name===mode,button=document.getElementById('mode-'+name),panel=document.getElementById('panel-'+name),frame=document.getElementById('frame-'+name);
   button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;panel.hidden=!selected;
-  if(selected){if(!frame.getAttribute('src'))frame.src='workspace.html?mode='+name+'&v=flex10';else frame.contentWindow.postMessage({type:'plant-workspace-measure'},location.origin);}
+  if(selected){if(!frame.getAttribute('src'))frame.src='workspace.html?mode='+name+'&v=flex11';else frame.contentWindow.postMessage({type:'plant-workspace-measure'},location.origin);}
  }
  document.getElementById('mode-hint').textContent=(mode==='indoor'?'室内租赁':'室外绿化')+'工作区：价格库、清单、计价设置与下载结果分别隔离，切换会保留当前进度。';
  history.replaceState(null,'','#'+mode);
