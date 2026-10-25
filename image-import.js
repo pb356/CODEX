@@ -81,8 +81,11 @@ export async function imageToExcel(file,{onProgress=()=>{},purpose='project'}={}
  onProgress({status:'生成 Excel',progress:.91});
  const book=new ExcelJS.Workbook(),sheet=book.addWorksheet('识别清单');
  if(purpose==='project'&&values.length>1&&values[0].some(label=>/^(?:品种|名称|品类|植物名称|项目名称|材料名称)$/.test(label))){
-  const header=values[0];if(!header.some(label=>/^(?:单价|价格|综合单价|月租金|元\/月)$/.test(label))){header.push('单价');for(const row of values.slice(1))row.push('');}
-  if(!header.some(label=>/^(?:金额|合价|总价|合计金额)$/.test(label))){header.push('金额');for(const row of values.slice(1))row.push('');}
+  const header=values[0],priceHeader=/^(?:单价|价格|综合单价|月租金|元\/月)$/,amountHeader=/^(?:金额|合价|总价|合计金额)$/;
+  if(!header.some(label=>priceHeader.test(label))){header.push('单价');for(const row of values.slice(1))row.push('');}
+  if(!header.some(label=>amountHeader.test(label))){header.push('金额');for(const row of values.slice(1))row.push('');}
+  const price=header.findIndex(label=>priceHeader.test(label)),amount=header.findIndex(label=>amountHeader.test(label));
+  for(const row of values.slice(1)){row[price]='';row[amount]='';}
  }
  values.forEach(row=>sheet.addRow(row));sheet.columns.forEach(column=>column.width=22);sheet.views=[{state:'frozen',ySplit:1}];
  const picture=book.addWorksheet('原始图片');picture.getCell('A1').value='原始图片（请对照识别清单核对文字和数字）';picture.getColumn(1).width=28;

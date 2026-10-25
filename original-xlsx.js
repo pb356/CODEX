@@ -82,7 +82,6 @@ export async function fillOriginalXlsx(buffer,rows,context,{taxMode='original',t
    if(rental&&row.isGift){write(book,at('price',r),price??0,{style:styles});write(book,at('amount',r),0,{style:book.cells.get(at('amount',r))?.getAttribute('s')||styles});continue;}
    if(String(row.amountOverride??'').trim()!==''&&number(row.amountOverride)===null)throw Error(`${layout.sheet}第${r}行手动金额无效，请修正。`);
    if(String(row.amountOverride??'').trim()!==''&&number(row.amountOverride)!==null){write(book,at('price',r),price??'',{style:styles});write(book,at('amount',r),number(row.amountOverride),{style:book.cells.get(at('amount',r))?.getAttribute('s')||styles});continue;}
-   if((price===null||quantity===null)&&origin.amountFormula&&book.cells.get(at('amount',r))&&child(book.cells.get(at('amount',r)),'f')){if(price!==null)write(book,at('price',r),price,{style:styles});continue;}
    if(price===null||quantity===null){missing++;write(book,at('price',r),price??'',{style:styles});write(book,at('amount',r),'');continue;}
    write(book,at('price',r),price,{style:styles});
    const old=book.cells.get(at('amount',r)),f=old?formulaFor(book,old):null;

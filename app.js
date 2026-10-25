@@ -1,10 +1,11 @@
-import {initPriceLibraryEditor} from './price-library-editor.js?v=visual2';
-import {imageToExcel,isImage} from './image-import.js?v=visual2';
-import {createExcelPreview} from './excel-preview.js?v=visual2';
-import {customKey,itemSpec,validateCustom,lineAmount} from './custom-items.js?v=visual2';
+import {initPriceLibraryEditor} from './price-library-editor.js?v=visual3';
+import {imageToExcel,isImage} from './image-import.js?v=visual3';
+import {checkUpload} from './file-policy.js?v=visual3';
+import {createExcelPreview} from './excel-preview.js?v=visual3';
+import {customKey,itemSpec,validateCustom,lineAmount} from './custom-items.js?v=visual3';
 import {PERIODS,periodFromText,rentalUnit,rentDuration} from './rental.js?v=dual6';
-import {fillOriginalXlsx} from './original-xlsx.js?v=visual2';
-import {norm,specKey,unitKey,priceKey,matchPrice,priceEntries,quoteKey,categoryOf} from './pricing.js?v=visual2';
+import {fillOriginalXlsx} from './original-xlsx.js?v=visual3';
+import {norm,specKey,unitKey,priceKey,matchPrice,priceEntries,quoteKey,categoryOf} from './pricing.js?v=visual3';
 import * as pdfjs from './vendor/pdf.mjs';
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf.worker.mjs', import.meta.url).href;
 const $ = id => document.getElementById(id);
@@ -189,6 +190,15 @@ const match=row=>{
  if(retained!==''&&Number.isFinite(Number(retained))&&Number(retained)>=0)return {...base,price:retained,source:'原清单报价',status:'原清单报价（可编辑）',matchedFrom:'original'};
  return {...base,candidates:[...(base.candidates||[]),...custom],matchedFrom:'unmatched'};
 };
+function matchImageRow(row){
+ const supplied=String(row.unit||'').trim();
+ if(supplied&&!unitWords.has(unitKey(supplied))){
+  const relevant=[...library,...customLibrary].filter(entry=>norm(entry.name)===norm(row.name)&&specKey(entry.spec)===specKey(row.spec)&&categoryOf(entry)===categoryOf(row)&&(!isIndoor||(entry.billingPeriod||'month')===(row.chargeType==='once'?'once':$('rental-period').value)));
+  const units=[...new Set(relevant.map(entry=>unitKey(entry.unit)).filter(Boolean))];
+  if(units.length===1){const known=relevant.find(entry=>unitKey(entry.unit)===units[0]).unit;const matched=match({...row,unit:known});if(String(matched.price??'')!=='')return {...matched,status:`图片单位“${supplied}”已按同名同规格库价修正为“${known}”，请核对。`};}
+ }
+ return match(row);
+}
 async function documentText(file){
  if(file.name.toLowerCase().endsWith('.pdf')){
   const doc=await pdfjs.getDocument({data:new Uint8Array(await file.arrayBuffer()),cMapUrl:new URL('./vendor/cmaps/',import.meta.url).href,cMapPacked:true,standardFontDataUrl:new URL('./vendor/standard_fonts/',import.meta.url).href}).promise;
@@ -299,7 +309,7 @@ async function run(id,action){
  catch(error){const message=error.message||String(error);notice('处理失败：'+message);if(id==='custom-import'){customStatus('导入失败：'+message);$('custom-status').scrollIntoView({block:'nearest'});}if(['export','preview'].includes(id))exportStatus((id==='preview'?'预览失败：':'导出失败：')+message+'\n匹配结果已保留，可以修正设置后重试。',true);}
  finally{finishProgress(progressKind,succeeded);$('price-catalog').inert=false;$('excel-preview').inert=false;controls.forEach(button=>button.disabled=false);locked.forEach(({node,disabled})=>node.disabled=disabled);if(id==='export')$('export').textContent='导出 Excel';}
 }
-function selected(id){const file=$(id).files[0];if(!file)throw Error('请先选择文件。');if(file.size>20*1024*1024)throw Error('文件超过20MB，请拆分后上传。');return file;}
+function selected(id){return checkUpload($(id).files[0]);}
 function savePrices(next){const normalized=next.map(normalizeStoredQuote);localStorage.setItem(KEY,JSON.stringify(normalized));library=normalized;refresh();}
 function rematchAfterImport(){rows=rows.map(row=>['人工填写','人工确认库价','人工金额','新品报价已保存'].includes(row.status)?row:match(row));render();}
 function matchingReport(extra=''){
@@ -327,7 +337,7 @@ $('import').onclick=()=>run('import',async()=>{
 });
 $('quote').onclick=()=>run('quote',async()=>{
  const original=selected('project'),converted=isImage(original)?await imageToExcel(original,{onProgress:event=>ocrProgress('project',event)}):null,file=converted?.file||original;imageDownload('project',converted?.file);if(converted)taskProgress('project','正在匹配识别出的清单',.94);let text='',warning='';
- if(/\.(xlsx|csv)$/i.test(file.name)){const data=await table(file,{purpose:converted?'image-project':'project'});if(isIndoor&&data.items.some(row=>row.chargeType!=='once'&&row.billingPeriod!==$('rental-period').value))throw Error('清单计租周期与当前设置不同，请先切换计租单位后重新读取。');originalProject=/\.xlsx$/i.test(file.name)?{buffer:await file.arrayBuffer(),filename:file.name,context:data}:null;rows=data.items.map(match);warning=matchingReport((converted?'图片已转为Excel，请先核对识别文字和数字。':'')+'植物、其他品类和原有报价均已完整保留，可在预览中修改。');await mountOriginalPreview();}
+ if(/\.(xlsx|csv)$/i.test(file.name)){const data=await table(file,{purpose:converted?'image-project':'project'});if(isIndoor&&data.items.some(row=>row.chargeType!=='once'&&row.billingPeriod!==$('rental-period').value))throw Error('清单计租周期与当前设置不同，请先切换计租单位后重新读取。');originalProject=/\.xlsx$/i.test(file.name)?{buffer:await file.arrayBuffer(),filename:file.name,context:data}:null;rows=data.items.map(row=>(converted?matchImageRow:match)({...row,price:'',_importedPrice:'',_importedAmount:undefined,amountOverride:undefined}));warning=matchingReport((converted?'图片已转为Excel，请先核对识别文字和数字。':'')+'已清空原清单单价与明细金额，并根据当前价格库重新填价；未匹配项目留空，可在预览中修改。');await mountOriginalPreview();}
  else{text=await documentText(file);if(!text.trim())throw Error('没有可提取文字。扫描件和图片方案暂不支持，请使用文字版PDF/PPTX。');originalProject=null;await mountOriginalPreview();rows=extract(text);warning='方案提取为辅助草稿，词表外品种可能遗漏。数量不推断，规格未确认时价格留空；备选方案不可直接合并计量。请核对原文。';}
  $('rental-terms').hidden=!isIndoor||!originalProject?.context.rentalReceipts?.length;if(isIndoor&&originalProject?.context.rentalReceipts?.length)$('rental-terms').textContent='原表实收：'+originalProject.context.rentalReceipts.map(receipt=>receipt.value+'元/'+PERIODS[$('rental-period').value]).join('；')+'。保留固定价时按租期计算实收；选择按行求和则重新计算，不沿用旧实收。';
  $('export-mode').value=originalProject?'original':'standard';$('export-note').textContent=originalProject?'已保留原文件：'+originalProject.filename+'。原格式导出将填入原单价/金额列，并增加报价核对页。':'当前不是XLSX原表，将导出带金额和税费汇总的标准报价表。';$('original').hidden=!text;$('text').textContent=text;render();notice(warning);
@@ -438,7 +448,6 @@ $('project-title').textContent=isIndoor?'室内租赁报价预览（可编辑）
 document.title=isIndoor?'植价 · 室内植物租赁':'植价 · 室外植物报价';
 $('rental-duration').addEventListener('change',()=>{if(isIndoor)render();});
 $('rental-period').onchange=()=>{rentalLabels();rows=rows.map(row=>match({...row,unit:rentalUnit(row.unit),billingPeriod:$('rental-period').value}));render();notice('已按'+PERIODS[$('rental-period').value]+'重新匹配，仅使用该计租周期报价；租期数值未做天/月/年换算，请确认。');};
-if(isIndoor){$('library-title').nextElementSibling.textContent='支持XLSX/CSV月租、日租、年租报价。可识别“元/月”等列；缺单位时采用缺省单位。材料、人工等也可导入；一次性费用不乘租期。赠送行不作为常规价格入库。导入后可按来源编辑条目或原表；旧文件请重新导入以补齐此前未收录的材料/人工。与室外价格库完全独立。';}
 rentalLabels();
 if(parent!==window){
  const measure=()=>parent.postMessage({type:'plant-workspace-height',height:document.body.offsetHeight+48},location.origin);
