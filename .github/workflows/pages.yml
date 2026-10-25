@@ -27,3 +27,25 @@ jobs:
       - name: Publish
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Verify public website
+        env:
+          SITE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          python - <<'PY'
+          import os, time, urllib.request
+          root = os.environ['SITE_URL'].rstrip('/') + '/'
+          checks = [('', '植物报价助手'), ('app.js', 'plant-pricing-library-v1'), ('vendor/pdf.mjs', 'pdfjsVersion')]
+          for path, marker in checks:
+              for attempt in range(10):
+                  try:
+                      req = urllib.request.Request(root + path, headers={'User-Agent': 'PlantPricingDeploymentCheck/1.0', 'Cache-Control': 'no-cache'})
+                      with urllib.request.urlopen(req, timeout=15) as response:
+                          body = response.read().decode('utf-8')
+                          assert response.status == 200 and marker in body, 'Unexpected website content'
+                      print('Verified HTTPS 200:', root + path)
+                      break
+                  except Exception:
+                      if attempt == 9:
+                          raise
+                      time.sleep(5)
+          PY
