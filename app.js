@@ -1,8 +1,8 @@
 import {initPriceLibraryEditor} from './price-library-editor.js?v=visual3';
 import {imageToExcel,isImage} from './image-import.js?v=visual3';
 import {checkUpload} from './file-policy.js?v=visual3';
-import {plantNameKey,smartMatchPrice} from './smart-pricing.js?v=match5';
-import {AI_PROVIDERS,askPlantAI} from './ai-match.js?v=match5';
+import {plantNameKey,smartMatchPrice} from './smart-pricing.js?v=match6';
+import {AI_PROVIDERS,askPlantAI} from './ai-match.js?v=match6';
 import {createExcelPreview} from './excel-preview.js?v=visual3';
 import {customKey,itemSpec,validateCustom,lineAmount} from './custom-items.js?v=visual3';
 import {PERIODS,periodFromText,rentalUnit,rentDuration} from './rental.js?v=dual6';
@@ -46,6 +46,16 @@ try {library=JSON.parse(localStorage.getItem(KEY)||'[]');if(!Array.isArray(libra
 catch {notice('无法读取浏览器价格库。请检查浏览器存储权限，或用备份文件重新导入。');}
 const aliases={name:['植物品种','植物名称','植物种类','植物品名','绿植品种','绿植名称','绿植种类','苗木名称','苗木品种','苗木种类','品种名称','品种','种类','名称','品类','项目名称','项目','品项','项目内容','工作内容','费用名称','品名','材料名称'],spec:['规格','植物规格','苗木规格','规格cm','规格(cm)','规格mm','规格(mm)','规格m','规格(m)','尺寸','尺寸cm','尺寸mm','尺寸m','尺寸(m)'],unit:['单位','计量单位'],price:['单价','价格','综合单价','单价(元)','含税单价','不含税单价','单价(元/株)','单价(元/棵)','月租金','月租单价','月租金单价','租金(元/月)','月单价','日租金','日租单价','年租金','年租单价','租赁单价','租赁价格','元/月','元/天','元/日','元/年','租金/月'],quantity:['数量','工程量'],amount:['金额','总价','合价','金额(元)','合计金额','总价(元)','合计(元)'],source:['报价来源','来源文件'],sourceId:['报价文件标识'],business:['报价工作区'],libraryType:['价格库类型'],category:['项目类别','类别','分类'],chargeType:['计费方式','收费方式'],billingPeriod:['计租周期'],notes:['备注','说明','计费说明'],duration:['租期','租赁月数','租期(月)','租赁天数','租期(天)','租期(日)','租赁年数','租期(年)','租赁周期数']};
 const nameHeaderPriority=value=>/植物|绿植|苗木/.test(value)?3:/品种|种类/.test(value)?2:/名称|品名/.test(value)?1:0;
+function headerField(value){
+ const label=norm(value).replace(/[：:]+$/,'');if(!label)return null;
+ for(const [field,words]of Object.entries(aliases))if(words.some(word=>norm(word)===label))return field;
+ if(/^(?:植物|苗木|绿植)?(?:规格|尺寸)(?:[\/／(（].*)?$/.test(label))return 'spec';
+ if(/^(?:数量|工程量|租赁数量)(?:[\/／(（].*)?$/.test(label))return 'quantity';
+ if(/^(?:单价|综合单价|含税单价|不含税单价|租赁单价|月租金|日租金|年租金|月单价|日单价|年单价|价格)(?:[\/／(（].*)?$/.test(label))return 'price';
+ if(/^(?:金额|合价|总价|合计金额|价税合计)(?:[\/／(（].*)?$/.test(label))return 'amount';
+ if(/^(?:单位|计量单位)(?:[\/／(（].*)?$/.test(label))return 'unit';
+ return null;
+}
 const vocabulary='银合欢 侧柏 珍珠狗牙花 蓝星花 肾蕨 迷迭香 澳洲米花 女贞 油橄榄 蒲葵 花叶十万错 银毛野牡丹 银叶仓鼠 滴水观音 鹤望兰 花叶长春蔓 狐尾天门冬 菲油果 棕竹 琴叶榕 富贵蕨 发财树 幸福树 散尾葵 绿萝 大叶绿萝 绿萝柱 金钱树 富贵竹 白掌 红掌 巴西木 龙血树 橡皮树 也门铁 富贵椰子 夏威夷椰子 竹芋 吊兰 虎皮兰 黄杨球 女贞球 天冬 大红花 桂花 芭蕉 旅人蕉 龟背竹 霸王蕨'.split(' ');
 function csvParse(text){
  const result=[];let row=[],value='',quoted=false;
@@ -83,7 +93,7 @@ function inferHeaderless(raw){
  return columns;
 }
 function specWithHeaderUnit(value,heading){
- const unit=norm(heading).match(/(?:规格|尺寸)(?:\()?((?:mm|毫米|cm|厘米|m|米))(?:\))?$/)?.[1];
+ const unit=norm(heading).match(/(?:规格|尺寸)(?:[\/／(（])?((?:mm|毫米|cm|厘米|m|米))(?:[)）])?$/)?.[1];
  if(!unit)return value;
  const completed=String(value).replace(/(高度|株高|冠幅|冠径|蓬幅|蓬径|胸径|米径|地径|长度|藤长|高|冠|h|p|d|g|l)\s*[:=]?\s*(\d+(?:\.\d+)?(?:\s*[-~～]\s*\d+(?:\.\d+)?)?)(mm|毫米|cm|厘米|m|米)?/gi,(_,label,number,explicit)=>label+number+(explicit||unit));
  return /^\d+(?:\.\d+)?(?:\s*[-~～]\s*\d+(?:\.\d+)?)?$/.test(completed)?completed+unit:completed;
@@ -112,7 +122,7 @@ async function table(file,{purpose='project'}={}){
   for(let i=0;i<Math.min(raw.length,30);i++){
    const found={},dims=[];let bestName=-1;
    raw[i].forEach((value,j)=>{
-    Object.entries(aliases).forEach(([key,words])=>{if(words.some(word=>norm(word)===norm(value))){if(key==='name'){const priority=nameHeaderPriority(String(value));if(priority>=bestName){found.name=j;bestName=priority;}}else found[key]=j;}});
+    const key=headerField(value);if(key){if(key==='name'){const priority=nameHeaderPriority(String(value));if(priority>=bestName){found.name=j;bestName=priority;}}else found[key]=j;}
     const dimension=dimensionHeader(value);if(dimension)dims.push({...dimension,index:j});
    });
    if('price'in found||'name'in found&&('spec'in found||'amount'in found||dims.length)){columns=found;dimensions=dims;header=i;break;}
