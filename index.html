@@ -7,6 +7,13 @@
 <div id="notice" role="status"></div><div class="cards">
 <section class="card"><div class="step">01 / 积累价格</div><h2>导入植物报价库</h2><p>支持 XLSX、CSV。支持前30行内的表头，以及“品类”“规格cm”列。需包含植物品种、规格、单位、单价。同品种、规格、单位再次导入将更新报价。</p><input type="file" id="prices" accept=".xlsx,.csv"><button id="import">导入报价</button> <a class="link secondary" href="#" id="template">下载模板</a></section>
 <section class="card"><div class="step">02 / 生成报价</div><h2>上传新清单或方案</h2><p>清单支持 XLSX、CSV；方案支持 PDF、PPTX。按品种、规格和单位匹配，无法确定的价格留空待核对。</p><input type="file" id="project" accept=".xlsx,.csv,.pdf,.pptx"><button id="quote">识别并匹配价格</button></section></div>
+<section class="card" id="template-manager" style="margin-bottom:26px">
+<div class="step">03 / 常用报价模板</div><div class="bar"><h2>我的报价模板</h2><span class="muted" id="template-count">正在读取模板……</span></div>
+<p>上传并保存多份 XLSX、CSV 模板，之后点击“使用模板填价”即可按当前价格库生成清单。模板无需填写单价；原文件也会保留，方便下载。</p>
+<label for="template-files">选择报价模板（可多选，每份不超过20MB）</label><input type="file" id="template-files" accept=".xlsx,.csv" multiple><button id="import-templates">导入报价模板</button>
+<p class="muted">模板仅保存在当前浏览器；同名文件会分别保存。清除网站数据会删除模板，请下载原模板备份。使用后导出标准报价清单，原模板的图片、布局和公式不随新清单导出。如需保留原版式，请下载原模板。</p>
+<div class="scroll"><table><thead><tr><th>模板名称</th><th>植物行数</th><th>导入时间</th><th>操作</th></tr></thead><tbody id="saved-templates"></tbody></table><div class="empty" id="templates-empty">还没有保存模板，可以一次选择多份报价表导入</div></div>
+</section>
 <section class="results"><div class="bar"><h2>项目清单</h2><button class="secondary" id="add">添加植物</button><button id="export">导出 Excel</button></div><p class="muted">所有单元格均可编辑。修改品种、规格或单位后原价格将清空，可点击“重新匹配”。数量由你核对填写。</p><div class="bar"><button class="secondary" id="rematch">重新匹配</button><span class="muted" id="summary">尚未上传清单</span></div><div class="scroll"><table><thead><tr><th>植物品种</th><th>规格</th><th>单位</th><th>数量</th><th>单价（元）</th><th>状态 / 参考报价</th><th></th></tr></thead><tbody id="rows"></tbody></table><div class="empty" id="empty">上传一份植物清单，开始你的第一份报价</div></div><details id="original" hidden><summary>查看方案提取原文，核对遗漏品种</summary><pre id="text"></pre></details></section>
 <details><summary>查看已保存的价格库</summary><p><button id="backup" class="secondary">备份价格库 Excel</button></p><div class="scroll"><table><thead><tr><th>品种</th><th>规格</th><th>单位</th><th>单价</th><th>来源</th></tr></thead><tbody id="library"></tbody></table></div></details><p class="muted">此版文件在浏览器本机解析，报价保存在当前浏览器，不在设备间同步。请用“备份价格库”导出保存；清除网站数据会删除本机报价。方案提取为草稿，扫描件、图片识别及规格推断尚未支持。</p></main>
-<script src="vendor/exceljs.min.js"></script><script src="vendor/jszip.min.js"></script><script type="module" src="app.js"></script></html>
+<script src="vendor/exceljs.min.js"></script><script src="vendor/jszip.min.js"></script><script type="module" src="app.js?v=20261025-templates1"></script></html>

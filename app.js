@@ -21,7 +21,7 @@ function csvParse(text){
  if(value||row.length){row.push(value);result.push(row);}return result;
 }
 function cellValue(v){if(v===null||v===undefined)return '';if(typeof v==='object'){if('result'in v)return cellValue(v.result);if(v.richText)return v.richText.map(x=>x.text).join('');if(v.text)return v.text;return '';}return String(v);}
-async function table(file){
+async function table(file,{allowEmpty=false}={}){
  let raw=[];
  if(file.name.toLowerCase().endsWith('.csv')){
   let bytes=await file.arrayBuffer(),text;
@@ -44,7 +44,7 @@ async function table(file){
   if(item.name&&!aliases.name.some(w=>norm(w)===norm(item.name)))items.push(item);
   else if(item.price||item.spec||item.quantity)skipped.push(`第${item.line}行：${r[1]||'未命名费用项'}`);
  });
- if(!items.length)throw Error('没有读到植物数据。');return {items,skipped};
+ if(!items.length&&!allowEmpty)throw Error('没有读到植物数据。');return {items,skipped};
 }
 const key=r=>[r.name,r.spec,r.unit].map(norm).join('\u0000');
 function match(r){
@@ -111,7 +111,7 @@ async function download(headers,items,filename){
  const url=URL.createObjectURL(new Blob([await book.xlsx.writeBuffer()],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
  const a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-async function run(id,action){const controls=[$('import'),$('quote')];controls.forEach(b=>b.disabled=true);notice('正在本机浏览器中处理文件，请稍候……');try{await action();}catch(e){notice('处理失败：'+e.message);}finally{controls.forEach(b=>b.disabled=false);}}
+async function run(id,action){const controls=[$('import'),$('quote'),$('import-templates')];controls.forEach(b=>b.disabled=true);notice('正在本机浏览器中处理文件，请稍候……');try{await action();}catch(e){notice('处理失败：'+e.message);}finally{controls.forEach(b=>b.disabled=false);}}
 function selected(id){const file=$(id).files[0];if(!file)throw Error('请先选择文件。');if(file.size>20*1024*1024)throw Error('文件超过20MB，请拆分后上传。');return file;}
 $('import').onclick=()=>run('import',async()=>{
  const file=selected('prices'),{items,skipped}=await table(file),newItems=new Map(),errors=[];
@@ -137,3 +137,77 @@ $('export').onclick=()=>{if(!rows.length)return notice('请先生成清单。');
 $('template').onclick=e=>{e.preventDefault();download(['植物品种','规格','单位','单价','数量'],[['桂花','高度200cm 冠幅150cm','株','380','10']],'植物报价模板.xlsx').catch(e=>notice(e.message));};
 $('backup').onclick=()=>download(['植物品种','规格','单位','单价'],library.map(r=>[r.name,r.spec,r.unit,r.price]),'植物价格库备份.xlsx').catch(e=>notice(e.message));
 refresh();
+
+// Store original template files separately from the price library. IndexedDB
+// accommodates XLSX files without consuming the small localStorage quota.
+let templateDatabase;
+function openTemplates(){
+ if(!templateDatabase)templateDatabase=new Promise((resolve,reject)=>{
+  const request=indexedDB.open('plant-pricing-templates',1);
+  request.onupgradeneeded=()=>request.result.createObjectStore('templates',{keyPath:'id'});
+  request.onsuccess=()=>resolve(request.result);
+  request.onerror=()=>reject(Error('无法访问浏览器模板存储，请检查存储权限或隐私模式。'));
+  request.onblocked=()=>reject(Error('模板存储被其他标签页占用，请关闭其他本网站标签页后刷新。'));
+ });
+ return templateDatabase;
+}
+async function templateOperation(mode,operation){
+ const db=await openTemplates();
+ return new Promise((resolve,reject)=>{
+  const transaction=db.transaction('templates',mode);
+  let request;
+  try{request=operation(transaction.objectStore('templates'));}catch(error){reject(error);return;}
+  transaction.oncomplete=()=>resolve(request.result);
+  transaction.onerror=transaction.onabort=()=>reject(Error(transaction.error?.name==='QuotaExceededError'?'浏览器存储空间不足，请先下载备份并删除不需要的模板。':'模板保存或读取失败，原有模板未被清空。'));
+ });
+}
+function downloadOriginal(template){
+ const url=URL.createObjectURL(template.file),link=document.createElement('a');
+ link.href=url;link.download=template.name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+async function showTemplates(){
+ const templates=await templateOperation('readonly',store=>store.getAll());
+ templates.sort((a,b)=>b.created-a.created);
+ $('saved-templates').replaceChildren();$('templates-empty').hidden=templates.length>0;
+ $('template-count').textContent=`已保存 ${templates.length} 份模板`;
+ for(const template of templates){
+  const tr=document.createElement('tr');
+  cell(tr,template.name);cell(tr,String(template.items.length));cell(tr,new Date(template.created).toLocaleString('zh-CN'));
+  const actions=cell(tr,'');
+  const use=document.createElement('button');use.textContent='使用模板填价';
+  use.onclick=()=>{
+   if(rows.length&&!window.confirm('使用模板将替换当前项目清单，未导出的修改会丢失。是否继续？'))return;
+   rows=template.items.map(match);render();$('original').hidden=true;$('text').textContent='';
+   notice(`已使用模板“${template.name}”，生成 ${rows.length} 行清单，按当前价格库重新匹配。原模板中的价格不会自动导入价格库。`+(template.skipped.length?`\n排除 ${template.skipped.length} 行无植物名称的费用项。`:''));
+   document.querySelector('.results').scrollIntoView({behavior:'smooth',block:'start'});
+  };
+  // Keep rendering independent from template filenames; user content is text.
+  const original=document.createElement('button');original.textContent='下载原模板';original.className='secondary';original.onclick=()=>downloadOriginal(template);
+  const remove=document.createElement('button');remove.textContent='删除';remove.className='secondary';
+  remove.onclick=async()=>{
+   if(!window.confirm(`删除模板“${template.name}”？此操作不会删除价格库和当前项目清单。`))return;
+   remove.disabled=true;
+   try{await templateOperation('readwrite',store=>store.delete(template.id));await showTemplates();notice('已删除模板，价格库和当前清单保留。');}
+   catch(error){notice(error.message);remove.disabled=false;}
+  };
+  for(const button of [use,original,remove]){button.style.margin='3px';actions.append(button);}
+  $('saved-templates').append(tr);
+ }
+}
+$('import-templates').onclick=()=>run('import-templates',async()=>{
+ const files=Array.from($('template-files').files);if(!files.length)throw Error('请先选择一份或多份报价模板。');
+ const saved=[],failed=[];
+ for(const file of files){
+  try{
+   if(!/\.(xlsx|csv)$/i.test(file.name))throw Error('仅支持XLSX或CSV格式');
+   if(file.size>20*1024*1024)throw Error('文件超过20MB');
+   const {items,skipped}=await table(file,{allowEmpty:true});
+   const template={id:crypto.randomUUID(),name:file.name,created:Date.now(),items,skipped,file};
+   await templateOperation('readwrite',store=>store.add(template));saved.push(`${file.name}（${items.length}行${skipped.length?`，排除${skipped.length}行费用项`:''}）`);
+  }catch(error){failed.push(`${file.name}：${error.message}`);}
+ }
+ await showTemplates();
+ notice(`已保存 ${saved.length} 份模板，失败 ${failed.length} 份。`+(saved.length?'\n已保存：\n'+saved.join('\n'):'')+(failed.length?'\n未保存：\n'+failed.join('\n'):''));
+ $('template-files').value='';
+});
+showTemplates().catch(error=>{$('template-count').textContent='模板存储不可用';notice(error.message);});

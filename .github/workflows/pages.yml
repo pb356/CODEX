@@ -34,7 +34,7 @@ jobs:
           python - <<'PY'
           import os, time, urllib.request
           root = os.environ['SITE_URL'].rstrip('/') + '/'
-          checks = [('', '植物报价助手'), ('app.js', 'plant-pricing-library-v1'), ('vendor/pdf.mjs', 'pdfjsVersion')]
+          checks = [('', 'template-manager'), ('app.js?v=20261025-templates1', 'import-templates'), ('vendor/pdf.mjs', 'pdfjsVersion')]
           for path, marker in checks:
               for attempt in range(10):
                   try:
