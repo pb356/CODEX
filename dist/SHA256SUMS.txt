@@ -1,0 +1,3 @@
+e776b08b28f314c69cdd2f5c2c7edcc98753604053b12c2a0b2b73bc16f376ec  DesktopBoxes.exe
+ae4fdd5fd0e49aa334872a52afe6e794ec3a6ba754be6bf5277b80da99ddadc8  DesktopBoxes-0.2.0-x64-Setup.exe
+b5765e7a7bdef73fcf7b9c395e58e9a041f12506b4bd7563ed754c2da9ffd433  DesktopBoxes-0.2.0-source.zip
