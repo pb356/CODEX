@@ -1,4 +1,6 @@
+#include "../src/leaf_motion.hpp"
 #include "../src/model.hpp"
+#include "../src/playback_policy.hpp"
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -39,6 +41,50 @@ box::State sample() {
 }
 int main() {
     try {
+        test("leaf clocks freeze across long pauses and deterministic motion remains gentle", [] {
+            foliage::Clock clock;
+            clock.setRunning(true, 1000);
+            require(clock.seconds(2500) == 1.5, "active animation time");
+            clock.setRunning(false, 2500);
+            require(clock.seconds(999999) == 1.5, "pause freezes pose");
+            clock.setRunning(true, 999999);
+            require(clock.seconds(1000499) == 2.0, "resume excludes paused wall time");
+            for (unsigned k = 0; k < 3; ++k)
+                for (int ms = 0; ms < 14000; ms += 10)
+                    require(std::isfinite(foliage::angle(k, ms / 1000.0)) &&
+                                std::abs(foliage::angle(k, ms / 1000.0)) <= 1.61,
+                            "angle bounded without frame randomization");
+            require(foliage::angle(0, 0) != foliage::angle(1, 0), "independent phases");
+        });
+        test("independent pause reasons survive interleaved unlock, wake and visibility changes",
+             [] {
+                 playback::Gate gate;
+                 using playback::Reason;
+                 using playback::Mode;
+                 require(playback::frameInterval(Mode::Standard, false, gate) == 34,
+                         "30fps upper bound");
+                 require(playback::frameInterval(Mode::Energy, false, gate) == 67,
+                         "energy upper bound");
+                 require(playback::frameInterval(Mode::Standard, true, gate) == 0,
+                         "reduced motion static");
+                 gate.set(Reason::Locked, true);
+                 gate.set(Reason::Sleeping, true);
+                 gate.set(Reason::Sleeping, false);
+                 require(gate.paused(), "wake must not undo lock pause");
+                 gate.set(Reason::Remote, true);
+                 gate.set(Reason::Locked, false);
+                 require(playback::frameInterval(Mode::Standard, false, gate) == 0,
+                         "remote remains paused");
+                 gate.set(Reason::Remote, false);
+                 gate.set(Reason::Covered, true);
+                 gate.set(Reason::Hidden, true);
+                 gate.set(Reason::Covered, false);
+                 require(gate.paused(), "uncover must not undo hidden pause");
+                 gate.set(Reason::Hidden, false);
+                 require(!gate.paused(), "all independent reasons cleared");
+                 require(playback::frameInterval(Mode::Static, false, gate) == 0,
+                         "static never starts timer");
+             });
         test("file paths accept Unicode and UNC; reject protocols/device/ADS/control", [] {
             require(box::validPath("C:\\中文 & space\\合同.txt"), "unicode");
             require(box::validPath("\\\\server\\share\\x"), "UNC");
@@ -158,24 +204,99 @@ int main() {
             s.boxes[0].items.push_back(s.boxes[0].items[0]);
             rejects([&] { box::encode(s); });
         });
-        test("item limits and global limits", [] {
-            auto s = sample();
-            s.boxes[0].items.clear();
-            for (size_t i = 0; i < box::MaxItems; ++i)
-                require(box::add(s.boxes[0], "C:\\Temp\\" + std::to_string(i)), "within limit");
-            require(!box::add(s.boxes[0], "C:\\Temp\\overflow"), "limit");
-            s.boxes.clear();
-            for (uint32_t k = 1; k <= 6; ++k) {
-                auto b = sample().boxes[0];
-                b.id = k;
-                b.items.clear();
-                for (int i = 0; i < 1700; ++i)
-                    b.items.push_back({"C:\\Temp\\" + std::to_string(i)});
-                s.boxes.push_back(b);
-            }
-            s.nextId = 7;
-            rejects([&] { box::encode(s); });
+        test("one box accepts more than ten thousand references without a fixed quota", [] {
+            box::State state;
+            state.nextId = 2;
+            box::Box b;
+            b.id = 1;
+            for (int n = 0; n < 11000; ++n)
+                b.items.push_back({"C:\\Temp\\" + std::to_string(n) + ".txt"});
+            require(box::add(b, "C:\\Temp\\beyond-11000.txt"), "no per-box quota");
+            state.boxes.push_back(std::move(b));
+            auto bytes = box::encode(state);
+            auto restored = box::decode(bytes);
+            require(restored.boxes[0].items.size() == 11001, "complete large restore");
+            require(restored.boxes[0].w == 380 && restored.boxes[0].h == 340,
+                    "capacity does not resize box");
         });
+        test("legacy v1 fixture migrates without changing geometry, custom sizes or references",
+             [] {
+                 auto path =
+                     std::filesystem::path(__FILE__).parent_path() / "fixtures" / "legacy-v1.db";
+                 std::ifstream input(path, std::ios::binary);
+                 require(bool(input), "legacy fixture exists");
+                 std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(input), {}};
+                 auto state = box::decode(bytes);
+                 require(state.boxes.size() == 2 && state.nextId == 3, "legacy boxes");
+                 auto &b = state.boxes[0];
+                 require(b.x == -540 && b.y == 120 && b.w == 560 && b.h == 480 && b.scroll == 7 &&
+                             b.collapsed && b.locked,
+                         "legacy layout exact");
+                 require(b.icon == 36 && b.font == 15 && b.opacity == 173,
+                         "custom appearance preserved");
+                 require(b.items[0].path == "C:\\旧项目\\中文 文件.txt" && state.boxes[1].through,
+                         "legacy refs and interaction");
+                 auto current = box::encode(state);
+                 require(box::decode(current).boxes[0].items[1].path == b.items[1].path,
+                         "v2 re-encode");
+             });
+        test("inbox classification retains inventory; removing final classification restores "
+             "unclassified status",
+             [] {
+                 auto state = sample();
+                 state.boxes[0].kind = box::Kind::Inbox;
+                 auto path = state.boxes[0].items[1].path;
+                 require(!box::classified(state, path), "initially unclassified");
+                 auto count = state.boxes[0].items.size();
+                 require(box::transfer(state.boxes[0], state.boxes[1], 1),
+                         "classify desktop reference");
+                 require(state.boxes[0].items.size() == count && box::classified(state, path),
+                         "inventory remains");
+                 require(
+                     box::transfer(state.boxes[1], state.boxes[0], state.boxes[1].items.size() - 1),
+                     "return reference to inbox");
+                 require(!box::classified(state, path) && state.boxes[0].items.size() == count,
+                         "last classification removed only");
+                 require(box::add(state.boxes[1], "D:\\Other\\not-on-desktop.txt"),
+                         "non-desktop reference");
+                 require(!box::transfer(state.boxes[1], state.boxes[0],
+                                        state.boxes[1].items.size() - 1),
+                         "inbox cannot pretend to move a non-desktop file");
+             });
+        test("temporary desktop entries filtered without treating a zero byte final file as "
+             "temporary",
+             [] {
+                 for (auto name :
+                      {"desktop.ini", "Thumbs.db", "~$document.docx", "file.crdownload",
+                       "file.part", "file.partial", "file.tmp", ".~lock.document.docx#"})
+                     require(box::ignoredDesktopName(name), "temp filter");
+                 for (auto name :
+                      {"合法空文件.txt", "final.docx", "项目目录", "应用快捷方式.lnk", "notes.md"})
+                     require(!box::ignoredDesktopName(name), "valid final entry");
+             });
+        test("appearance preview transaction leaves geometry, item paths and inventory flags "
+             "untouched",
+             [] {
+                 auto state = sample();
+                 auto original = state.boxes[0];
+                 auto changed = original;
+                 changed.name = "预览名称";
+                 changed.icon = 52;
+                 changed.bg = 0xf1f0e9;
+                 changed.collapsed = true;
+                 changed.items.clear();
+                 changed.x = 999;
+                 changed.kind = box::Kind::Inbox;
+                 box::appearance(state.boxes[0], changed);
+                 require(state.boxes[0].items.size() == original.items.size() &&
+                             state.boxes[0].items[0].path == original.items[0].path,
+                         "appearance never changes references");
+                 require(state.boxes[0].x == original.x && state.boxes[0].w == original.w &&
+                             !state.boxes[0].collapsed && state.boxes[0].kind == box::Kind::Normal,
+                         "geometry and kind unchanged");
+                 box::appearance(state.boxes[0], original);
+                 require(box::encode(state) == box::encode(sample()), "cancel rollback exact");
+             });
         test("seeded decoder fuzz (10000 bounded malformed records)", [] {
             std::mt19937 rng(356);
             for (int i = 0; i < 10000; ++i) {

@@ -10,6 +10,6 @@ export WINEDLLPATH="$root/usr/lib/x86_64-linux-gnu/wine/x86_64-windows:$root/usr
 export LD_LIBRARY_PATH="$root/usr/lib/x86_64-linux-gnu:$root/usr/lib/x86_64-linux-gnu/wine/x86_64-unix${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export XDG_CACHE_HOME=/workspace/.cache
 export WINEDEBUG=-all
-for name in core-tests windows-tests ui-smoke; do
+for name in core-tests windows-tests ui-smoke features-tests wallpaper-tests; do
  "$root/usr/lib/wine/wine64" "$PWD/build/$name.exe" | tee "build/$name-wine.log"
 done

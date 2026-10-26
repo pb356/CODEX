@@ -1,6 +1,6 @@
 param(
  [Parameter(Mandatory=$true)][int]$AppProcessId,
- [Parameter(Mandatory=$true)][ValidateSet('effects-off','hover-playing','fade-finished','soak')][string]$Phase,
+ [Parameter(Mandatory=$true)][ValidateSet('effects-off','hover-playing','fade-finished','wallpaper-off','wallpaper-energy','wallpaper-standard','wallpaper-with-hover','wallpaper-paused','large-list','soak')][string]$Phase,
  [ValidateRange(10,86400)][int]$Seconds = 600,
  [ValidateRange(1,60)][int]$Interval = 5,
  [string]$OutputDirectory = (Join-Path $env:TEMP 'DesktopBoxesMeasurements')

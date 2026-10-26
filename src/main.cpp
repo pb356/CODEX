@@ -1,5 +1,11 @@
+#include "async.hpp"
+#include "design.hpp"
+#include "inbox.hpp"
 #include "platform.hpp"
+#include "playback_policy.hpp"
+#include "preview_launcher.hpp"
 #include <dwmapi.h>
+#include <oleacc.h>
 #include <sstream>
 #include <windowsx.h>
 using namespace desktop;
@@ -30,7 +36,19 @@ enum Command {
     Animations,
     Startup,
     RestoreInput,
-    Help
+    Help,
+    NewInbox,
+    PauseInbox,
+    OpenDesktop,
+    InboxAll,
+    InboxUnclassified,
+    ViewNew,
+    GlobalSettings,
+    WallpaperSettings,
+    RestoreDesktopIcons,
+    OpenComputer,
+    OpenRecycle,
+    SortManual
 };
 struct App;
 struct View {
@@ -48,7 +66,25 @@ struct View {
     int fromH = 0, targetH = 0, fromY = 0, targetY = 0;
     bool occluded = false;
     std::string query, cachedQuery;
-    bool filterDirty = true;
+    bool filterDirty = true, loading = false, focused = false;
+    int selected = -1, hovered = -1, focusPart = 0, dropCount = 0, dropFeedback = 0;
+    int dragScrollDirection = 0, thumbOffset = 0;
+    bool scrollDragging = false;
+    float scrollRemainder = 0, softX = 0, softY = 0;
+    uint64_t revision = 0;
+    HWND tooltip = nullptr;
+    std::shared_ptr<View *> life = std::make_shared<View *>(this);
+    bool dropRegistered = false;
+    std::string jumpPath;
+    std::deque<std::string> importQueue;
+    box::PathSet importKeys;
+    uint64_t importRevision = 0;
+    unsigned imported = 0, importFailed = 0;
+    std::wstring importDetails;
+    void pumpImports();
+    std::wstring notice;
+    ULONGLONG noticeUntil = 0;
+
     std::vector<int> filtered;
     std::vector<std::wstring> labels, types;
     HDC surfaceDC = nullptr;
@@ -56,6 +92,9 @@ struct View {
     void *surfaceBits = nullptr;
     int surfaceW = 0, surfaceH = 0;
     std::unique_ptr<SolidBrush> starBrush;
+    std::unique_ptr<Bitmap> glowBitmap;
+    std::unique_ptr<ImageAttributes> glowAttributes;
+    uint64_t glowKey = 0;
     void clearSurface() {
         if (surfaceDC)
             DeleteDC(surfaceDC);
@@ -66,11 +105,27 @@ struct View {
         surfaceBits = nullptr;
     }
     ~View() {
+        *life = nullptr;
+        if (IsWindow(hwnd))
+            DestroyWindow(hwnd);
         clearSurface();
     }
 
     std::map<std::string, int> health;
-    std::map<std::wstring, std::unique_ptr<Bitmap>> icons;
+    std::map<std::string, std::shared_ptr<SharedIcon>> actualIcons;
+    std::map<std::string, std::unique_ptr<Bitmap>> iconBitmaps;
+    std::map<std::string, ULONGLONG> iconAges;
+    std::set<std::string> requestedIcons;
+    std::wstring tooltipBuffer;
+    void tooltipText(POINT p);
+    void ensureVisible(int item);
+    RECT scrollThumb();
+    void consumeWheel(int delta);
+    void acceptPaths(std::vector<std::string> paths);
+    void requestProjection();
+    int contentY() const;
+    void flash(std::wstring text);
+
     box::Box &data();
     int px(int x) const {
         return MulDiv(x, dpi, 96);
@@ -78,6 +133,7 @@ struct View {
     int dip(int x) const {
         return MulDiv(x, 96, dpi);
     }
+    bool pendingIconRequests = false;
     void draw();
     void fit();
     void toggle();
@@ -99,6 +155,15 @@ struct App {
     box::State state;
     std::vector<std::unique_ptr<View>> views;
     std::unique_ptr<Monitor> monitor;
+    std::unique_ptr<AsyncQueue<ProjectionJob, ProjectionResult>> projections;
+    std::unique_ptr<AsyncQueue<IconJob, IconResult>> iconLoader;
+    std::unique_ptr<InboxWatcher> inbox;
+    std::unique_ptr<PreviewLauncher> wallpaperPreview;
+    uint64_t inboxRevision = 0;
+    bool inboxHealthy = false, pendingSave = false;
+    playback::Gate sessionGate;
+    std::vector<std::wstring> desktopRoots;
+
     std::wstring dir;
     bool hidden = false, suspended = false, saveBlocked = false, saveWarned = false,
          quitting = false, modal = false;
@@ -108,6 +173,10 @@ struct App {
     void save() {
         if (saveBlocked)
             return;
+        if (modal || modalDepth) {
+            pendingSave = true;
+            return;
+        }
         try {
             if (writeConfig(state, dir)) {
                 saveWarned = false;
@@ -127,6 +196,8 @@ struct App {
         SetTimer(controller, SaveTimer, 600, nullptr);
         if (update && monitor)
             monitor->update(state);
+        if (update)
+            invalidateInbox();
     }
     View *view(uint32_t id) {
         for (auto &v : views)
@@ -134,6 +205,16 @@ struct App {
                 return v.get();
         return nullptr;
     }
+    box::Box *inboxData() {
+        for (auto &b : state.boxes)
+            if (b.kind == box::Kind::Inbox)
+                return &b;
+        return nullptr;
+    }
+    void updateInbox(bool fresh = true);
+    void createInbox();
+    void invalidateInbox();
+    void pauseFor(playback::Reason reason, bool enabled);
     void createView(uint32_t id);
     void create();
     void all(bool collapse);
@@ -158,7 +239,7 @@ box::Box &View::data() {
 bool motionAllowed(App *a) {
     BOOL enabled = TRUE;
     SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0);
-    return enabled && a->state.animations;
+    return enabled && a->state.animations && !design::highContrast();
 }
 bool startupEnabled() {
     HKEY k;
@@ -278,124 +359,73 @@ bool form(HWND owner, Form &f) {
         if (IsWindow(h))
             EnableWindow(h, TRUE);
     globalApp->modal = false;
+    if (globalApp->pendingSave) {
+        globalApp->pendingSave = false;
+        globalApp->dirty();
+    }
     return f.accepted;
 }
-uint32_t number(const std::wstring &s, int lo, int hi) {
-    size_t n = 0;
-    auto v = std::stoul(s, &n);
-    if (n != s.size() || v < (unsigned)lo || v > (unsigned)hi)
-        throw std::runtime_error("range");
-    return (uint32_t)v;
-}
-uint32_t color(const std::wstring &s) {
-    size_t n = 0;
-    auto x = s;
-    if (!x.empty() && x[0] == '#')
-        x.erase(0, 1);
-    auto v = std::stoul(x, &n, 16);
-    if (n != 6 || v > 0xffffff)
-        throw std::runtime_error("color");
-    return (uint32_t)v;
-}
-std::wstring hex(uint32_t n) {
-    wchar_t b[10];
-    swprintf(b, 10, L"#%06X", n);
-    return b;
-}
-void settings(View *v) {
-    auto b = v->data();
-    Form f{L"收纳筐设置（数字项请按范围填写）",
-           {L"名称（1–80 字）", L"背景颜色 #RRGGBB", L"背景不透明度 16–245", L"文字颜色 #RRGGBB",
-            L"字号 10–24", L"图标大小 16–64", L"光晕颜色 #RRGGBB", L"光晕亮度 0–60",
-            L"光晕范围 40–300", L"星点数量 0–24", L"本筐光晕 0=关 / 1=开",
-            L"预设 0=自定义 1=轻柔 2=标准", L"整框穿透 0=关 / 1=开"},
-           {wide(b.name), hex(b.bg), std::to_wstring(b.opacity), hex(b.fg), std::to_wstring(b.font),
-            std::to_wstring(b.icon), hex(b.glowColor), std::to_wstring(b.brightness),
-            std::to_wstring(b.radius), std::to_wstring(b.stars), b.glow ? L"1" : L"0", L"0",
-            b.through ? L"1" : L"0"}};
-    if (!form(v->hwnd, f))
-        return;
-    try {
-        if (f.values[0].empty() || f.values[0].size() > 80)
-            throw std::runtime_error("name");
-        b.name = utf8(f.values[0]);
-        b.bg = color(f.values[1]);
-        b.opacity = number(f.values[2], 16, 245);
-        b.fg = color(f.values[3]);
-        b.font = number(f.values[4], 10, 24);
-        b.icon = number(f.values[5], 16, 64);
-        b.glowColor = color(f.values[6]);
-        b.brightness = number(f.values[7], 0, 60);
-        b.radius = number(f.values[8], 40, 300);
-        b.stars = number(f.values[9], 0, 24);
-        b.glow = number(f.values[10], 0, 1) != 0;
-        auto preset = number(f.values[11], 0, 2);
-        b.through = number(f.values[12], 0, 1) != 0;
-        if (preset == 1) {
-            b.brightness = 24;
-            b.radius = 140;
-            b.stars = 8;
-        }
-        if (preset == 2) {
-            b.brightness = 36;
-            b.radius = 170;
-            b.stars = 16;
-        }
-        v->data() = std::move(b);
-        v->changed();
-    } catch (...) {
-        message(v->hwnd, L"设置未保存：请检查名称、颜色格式和数值范围。", MB_OK | MB_ICONWARNING);
-    }
-}
-const std::vector<int> &View::visible() {
-    if (!filterDirty && cachedQuery == query && labels.size() == data().items.size())
-        return filtered;
+void settings(View *v);
+bool editSettings(App *app, View *view, box::Box &initial, bool creating = false);
+void globalSettings(App *app);
+void showImportDetails(View *view);
+#include "settings.inl"
+void View::requestProjection() {
+    filterDirty = false;
+    cachedQuery = query;
+    loading = true;
+    ++revision;
+    selected = -1;
+    hovered = -1;
     filtered.clear();
     labels.clear();
     types.clear();
-    cachedQuery = query;
-    filterDirty = false;
-    auto q = wide(query);
-    for (auto &c : q)
-        c = (wchar_t)towlower(c);
-    for (size_t i = 0; i < data().items.size(); ++i) {
-        auto &item = data().items[i];
-        auto name = wide(box::nameOf(item.path));
-        auto lower = name;
-        for (auto &c : lower)
-            c = (wchar_t)towlower(c);
-        if (q.empty() || lower.find(q) != std::wstring::npos)
-            filtered.push_back((int)i);
-        auto dot = name.find_last_of(L'.');
-        auto ext = dot == std::wstring::npos ? L"file" : name.substr(dot);
-        if (ext.size() > 20)
-            ext = L"file";
-        for (auto &c : ext)
-            c = (wchar_t)towlower(c);
-        auto status = health.find(item.path);
-        if (status != health.end() && status->second == 4)
-            ext = L"folder";
-        types.push_back(ext);
-        if (status != health.end()) {
-            if (status->second == 2)
-                name = L"[失效] " + name;
-            if (status->second == 3)
-                name = L"[离线] " + name;
-        }
-        labels.push_back(std::move(name));
+    ProjectionJob job;
+    job.id = id;
+    job.revision = revision;
+    job.snapshot = data();
+    job.query = query;
+    if (data().kind == box::Kind::Inbox && !data().inboxAll)
+        for (auto &b : app->state.boxes)
+            if (b.kind == box::Kind::Normal)
+                for (auto &item : b.items)
+                    job.excluded.insert(box::pathKey(item.path));
+    if (app->projections) {
+        if (!app->projections->submit(std::to_string(id), std::move(job)))
+            loading = false;
+    } else {
+        auto r = project(job);
+        filtered = std::move(r.indices);
+        labels = std::move(r.labels);
+        types = std::move(r.types);
+        loading = false;
     }
+}
+const std::vector<int> &View::visible() {
+    if (filterDirty || cachedQuery != query)
+        requestProjection();
     return filtered;
 }
+int View::contentY() const {
+    return design::contentTop(const_cast<View *>(this)->data());
+}
+void View::flash(std::wstring text) {
+    notice = std::move(text);
+    noticeUntil = GetTickCount64() + 4500;
+    SetTimer(hwnd, 14, 4500, nullptr);
+    draw();
+}
 int View::hit(POINT p) {
-    if (data().collapsed || dip(p.y) < Title)
+    if (data().collapsed || dip(p.y) < contentY())
         return -1;
-    int x = dip(p.x), y = dip(p.y) - Title - 8;
+    int x = dip(p.x), y = dip(p.y) - contentY() - 12;
     if (x < Gap || y < 0)
         return -1;
     RECT r;
     GetClientRect(hwnd, &r);
-    int cols = std::max(1, (dip(r.right) - Gap) / 100);
-    int col = (x - Gap) / 100, row = y / (int(data().icon) + 48) + data().scroll;
+    int cell = design::cellWidth(data());
+    int cols = std::max(1, (dip(r.right) - 2 * Gap) / cell);
+    int col = (x - Gap) / cell, row = y / design::cellHeight(data()) + data().scroll;
     if (col >= cols)
         return -1;
     int pos = row * cols + col;
@@ -483,6 +513,7 @@ struct CoverCheck {
     HWND self;
     RECT r;
     bool covered = false;
+    HRGN remaining = nullptr;
 };
 BOOL CALLBACK coverEnum(HWND h, LPARAM p) {
     auto c = (CoverCheck *)p;
@@ -490,19 +521,29 @@ BOOL CALLBACK coverEnum(HWND h, LPARAM p) {
         return FALSE;
     if (!IsWindowVisible(h) || IsIconic(h))
         return TRUE;
-    if (GetWindowLongPtrW(h, GWL_EXSTYLE) & WS_EX_LAYERED)
+    if (GetWindowLongPtrW(h, GWL_EXSTYLE) & (WS_EX_LAYERED | WS_EX_TRANSPARENT))
         return TRUE;
     DWORD cloaked = 0;
     DwmGetWindowAttribute(h, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
     if (cloaked)
         return TRUE;
     RECT r;
-    if (GetWindowRect(h, &r) && r.left <= c->r.left && r.top <= c->r.top && r.right >= c->r.right &&
-        r.bottom >= c->r.bottom) {
+    if (GetWindowRect(h, &r)) {
         HRGN region = CreateRectRgn(0, 0, 0, 0);
+        if (!region)
+            return TRUE;
         int kind = GetWindowRgn(h, region);
+        if (kind == ERROR) {
+            RECT frame = r;
+            if (SUCCEEDED(
+                    DwmGetWindowAttribute(h, DWMWA_EXTENDED_FRAME_BOUNDS, &frame, sizeof(frame))))
+                r = frame;
+            SetRectRgn(region, r.left, r.top, r.right, r.bottom);
+        } else
+            OffsetRgn(region, r.left, r.top);
+        int left = c->remaining ? CombineRgn(c->remaining, c->remaining, region, RGN_DIFF) : ERROR;
         DeleteObject(region);
-        if (kind == ERROR || kind == SIMPLEREGION) {
+        if (left == NULLREGION) {
             c->covered = true;
             return FALSE;
         }
@@ -536,7 +577,11 @@ void View::timer() {
     if (now - occlusionAt > 250) {
         CoverCheck c{hwnd, {}};
         GetWindowRect(hwnd, &c.r);
-        EnumWindows(coverEnum, (LPARAM)&c);
+        c.remaining = CreateRoundRectRgn(c.r.left, c.r.top, c.r.right, c.r.bottom, px(28), px(28));
+        if (c.remaining) {
+            EnumWindows(coverEnum, (LPARAM)&c);
+            DeleteObject(c.remaining);
+        }
         occluded = c.covered;
         occlusionAt = now;
     }
@@ -551,14 +596,19 @@ void View::timer() {
     if (inside)
         fade = std::min(1.f, fade + dt / 0.18f);
     else
-        fade = std::max(0.f, fade - dt / 0.25f);
-    smooth.x += (LONG)((mouse.x - smooth.x) * std::min(1.f, dt * 9));
-    smooth.y += (LONG)((mouse.y - smooth.y) * std::min(1.f, dt * 9));
+        fade = std::max(0.f, fade - dt / 0.30f);
+    bool settledX = design::settle(softX, float(dip(mouse.x)), dt),
+         settledY = design::settle(softY, float(dip(mouse.y)), dt);
+    smooth.x = px((int)softX);
+    smooth.y = px((int)softY);
     draw();
-    if (!animating && ((!inside && fade <= 0) || !motionAllowed(app)))
+    bool staticDone = inside && fade >= 1 && data().effect != 2 && settledX && settledY;
+    if (!animating && ((!inside && fade <= 0) || !motionAllowed(app) || staticDone))
         stop();
 }
 void View::draw() {
+    if (app->suspended || app->hidden)
+        return;
     try {
         render();
     } catch (...) {
@@ -573,159 +623,7 @@ void View::draw() {
         }
     }
 }
-void View::render() {
-    auto &b = data();
-    RECT rect;
-    GetWindowRect(hwnd, &rect);
-    int w = rect.right - rect.left, h = rect.bottom - rect.top;
-    if (w < 1 || h < 1)
-        return;
-    struct ScreenDC {
-        HDC dc = GetDC(nullptr);
-        ~ScreenDC() {
-            if (dc)
-                ReleaseDC(nullptr, dc);
-        }
-    } screenOwner;
-    HDC screen = screenOwner.dc;
-    if (!screen)
-        return;
-    if (!surfaceDC || surfaceW != w || surfaceH != h) {
-        clearSurface();
-        surfaceW = w;
-        surfaceH = h;
-        BITMAPINFO bi{};
-        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        bi.bmiHeader.biWidth = w;
-        bi.bmiHeader.biHeight = -h;
-        bi.bmiHeader.biPlanes = 1;
-        bi.bmiHeader.biBitCount = 32;
-        bi.bmiHeader.biCompression = BI_RGB;
-        surfaceDC = CreateCompatibleDC(screen);
-        surfaceBitmap = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &surfaceBits, nullptr, 0);
-        if (!surfaceDC || !surfaceBitmap) {
-            clearSurface();
-            return;
-        }
-        SelectObject(surfaceDC, surfaceBitmap);
-    }
-    HDC dc = surfaceDC;
-    void *bits = surfaceBits;
-    {
-        Bitmap surface(w, h, w * 4, PixelFormat32bppPARGB, (BYTE *)bits);
-        Graphics g(&surface);
-        g.SetCompositingMode(CompositingModeSourceCopy);
-        g.Clear(Color((BYTE)b.opacity, (BYTE)(b.bg >> 16), (BYTE)(b.bg >> 8), (BYTE)b.bg));
-        g.SetCompositingMode(CompositingModeSourceOver);
-        g.SetSmoothingMode(SmoothingModeAntiAlias);
-        g.ScaleTransform(dpi / 96.f, dpi / 96.f);
-        g.SetClip(RectF(0, 0, float(dip(w)), float(b.collapsed ? Title : dip(h))));
-        if (fade > 0 && app->state.effects && b.glow && !effectFailed && !b.through) {
-            float x = float(dip(smooth.x)), y = float(dip(smooth.y)),
-                  radius = float(b.collapsed ? std::min(75u, b.radius) : b.radius);
-            GraphicsPath path;
-            path.AddEllipse(x - radius, y - radius, radius * 2, radius * 2);
-            PathGradientBrush brush(&path);
-            brush.SetCenterColor(Color((BYTE)(b.brightness * fade), (BYTE)(b.glowColor >> 16),
-                                       (BYTE)(b.glowColor >> 8), (BYTE)b.glowColor));
-            Color edge(0, 0, 0, 0);
-            int count = 1;
-            brush.SetSurroundColors(&edge, &count);
-            g.FillPath(&brush, &path);
-            float t = motionAllowed(app) ? GetTickCount64() / 1000.f : 0;
-            if (!starBrush)
-                starBrush = std::make_unique<SolidBrush>(Color(0, 0, 0, 0));
-            for (uint32_t i = 0; i < b.stars; ++i) {
-                float sx = float((i * 97 + 31) % std::max(1, dip(w))),
-                      sy = float((i * 59 + 19) % std::max(1, b.collapsed ? Title : dip(h)));
-                float bright = 0.7f + 0.15f * std::sin(t * 0.8f + i);
-                starBrush->SetColor(
-                    Color((BYTE)(b.brightness * 1.5f * fade * bright), 190, 198, 245));
-                g.FillEllipse(starBrush.get(), sx, sy, 1.5f, 1.5f);
-            }
-        }
-        SolidBrush title(Color(40, 255, 255, 255));
-        g.FillRectangle(&title, 0, 0, dip(w), Title);
-        SolidBrush text(Color(255, (BYTE)(b.fg >> 16), (BYTE)(b.fg >> 8), (BYTE)b.fg));
-        FontFamily family(L"Microsoft YaHei UI");
-        const FontFamily *chosenFamily =
-            family.GetLastStatus() == Ok ? &family : FontFamily::GenericSansSerif();
-        Font font(chosenFamily, (REAL)b.font, FontStyleRegular, UnitPixel);
-        Font small(chosenFamily, 11, FontStyleRegular, UnitPixel);
-        StringFormat fmt;
-        fmt.SetTrimming(StringTrimmingEllipsisCharacter);
-        fmt.SetFormatFlags(StringFormatFlagsNoWrap);
-        g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
-        auto heading = wide(b.name) + L"  (" + std::to_wstring(b.items.size()) + L")";
-        g.DrawString(heading.c_str(), -1, &font, RectF(12, 11, float(dip(w) - 94), 24), &fmt,
-                     &text);
-        g.DrawString(b.collapsed ? L"＋" : L"－", -1, &font, PointF(float(dip(w) - 72), 10), &text);
-        g.DrawString(L"⋯", -1, &font, PointF(float(dip(w) - 34), 10), &text);
-        if (!b.collapsed) {
-            g.SetClip(RectF(0, Title, float(dip(w)), float(std::max(0, dip(h) - Title))));
-            const auto &a = visible();
-            int cols = std::max(1, (dip(w) - Gap) / 100), cell = int(b.icon) + 48;
-            int rows = std::max(1, (dip(h) - Title - 8) / cell);
-            int maxScroll = std::max(0, ((int)a.size() + cols - 1) / cols - rows);
-            b.scroll = std::min(b.scroll, maxScroll);
-            int start = b.scroll * cols, stop = std::min((int)a.size(), start + (rows + 1) * cols);
-            for (int pos = start; pos < stop; ++pos) {
-                int index = a[pos];
-                float x = float(Gap + (pos % cols) * 100),
-                      y = float(Title + 8 + (pos / cols - b.scroll) * cell);
-                const auto &ext = types[index];
-                if (!icons.count(ext) && icons.size() < 64) {
-                    SHFILEINFOW info{};
-                    SHGetFileInfoW(
-                        ext.c_str(),
-                        ext == L"folder" ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL, &info,
-                        sizeof(info), SHGFI_ICON | SHGFI_LARGEICON | SHGFI_USEFILEATTRIBUTES);
-                    if (info.hIcon) {
-                        auto img = std::make_unique<Bitmap>(info.hIcon);
-                        DestroyIcon(info.hIcon);
-                        icons[ext] = std::move(img);
-                    }
-                }
-                auto icon = icons.find(ext);
-                if (icon != icons.end())
-                    g.DrawImage(icon->second.get(),
-                                RectF(x + (88 - b.icon) / 2, y, float(b.icon), float(b.icon)));
-                else {
-                    SolidBrush fallback(Color(210, 180, 195, 220));
-                    g.FillRectangle(&fallback, x + 28, y, 32.f, 32.f);
-                }
-                const auto &name = labels[index];
-                StringFormat label;
-                label.SetTrimming(StringTrimmingEllipsisCharacter);
-                label.SetAlignment(StringAlignmentCenter);
-                g.DrawString(name.c_str(), -1, &small, RectF(x, y + b.icon + 4, 88, 36), &label,
-                             &text);
-            }
-            if (a.empty()) {
-                auto s = query.empty() ? L"拖入文件、文件夹或快捷方式\n只保存引用，不移动原文件"
-                                       : L"没有匹配的已添加项目";
-                g.DrawString(s, -1, &small, RectF(18, Title + 28, float(dip(w) - 36), 75), nullptr,
-                             &text);
-            }
-            if (maxScroll) {
-                SolidBrush track(Color(120, 180, 195, 220));
-                float usable = float(dip(h) - Title - 12),
-                      thumb = std::max(16.f, usable * rows / (maxScroll + rows));
-                g.FillRectangle(&track, float(dip(w) - 5),
-                                Title + 6 + (usable - thumb) * b.scroll / maxScroll, 2.f, thumb);
-            }
-        }
-    }
-    POINT dst{rect.left, rect.top}, src{0, 0};
-    SIZE size{w, h};
-    BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-    BOOL ok = UpdateLayeredWindow(hwnd, screen, &dst, &size, dc, &src, 0, &blend, ULW_ALPHA);
-
-    if (!ok) {
-        effectFailed = true;
-        stop();
-    }
-}
+#include "render.inl"
 void View::open(int index) {
     auto &b = data();
     if (index < 0 || index >= (int)b.items.size())
@@ -744,58 +642,86 @@ void View::open(int index) {
                 L"不会搜索全盘。",
                 MB_OK | MB_ICONWARNING);
 }
+void View::acceptPaths(std::vector<std::string> paths) {
+    if (data().kind == box::Kind::Inbox) {
+        flash(L"收件箱会自动显示真实桌面的项目");
+        return;
+    }
+    if (importQueue.empty()) {
+        importKeys = box::itemKeys(data());
+        importRevision = revision;
+        imported = 0;
+        importFailed = 0;
+        importDetails.clear();
+    }
+    for (auto &p : paths)
+        importQueue.push_back(std::move(p));
+    pumpImports();
+    if (!importQueue.empty()) {
+        notice = L"正在加入项目…";
+        noticeUntil = GetTickCount64() + 600000;
+        SetTimer(hwnd, 16, 10, nullptr);
+        draw();
+    }
+}
+void View::pumpImports() {
+    if (importRevision != revision) {
+        importKeys = box::itemKeys(data());
+        importRevision = revision;
+    }
+    ULONGLONG start = GetTickCount64();
+    unsigned count = 0;
+    while (!importQueue.empty() && count++ < 128 && GetTickCount64() - start < 6) {
+        auto p = std::move(importQueue.front());
+        importQueue.pop_front();
+        if (!box::validPath(p)) {
+            ++importFailed;
+            importDetails += L"路径格式无效\r\n";
+            continue;
+        }
+        if (!importKeys.insert(box::pathKey(p)).second) {
+            ++importFailed;
+            importDetails += L"已在此收纳筐中：" + wide(p) + L"\r\n";
+            continue;
+        }
+        data().items.push_back({std::move(p)});
+        ++imported;
+    }
+    if (importQueue.empty()) {
+        KillTimer(hwnd, 16);
+        importKeys.clear();
+        if (imported)
+            changed(true);
+        if (importFailed)
+            flash(L"已添加 " + std::to_wstring(imported) + L" 项，" +
+                  std::to_wstring(importFailed) + L" 项未添加 · 点击查看");
+        else if (imported)
+            flash(L"已添加 " + std::to_wstring(imported) + L" 项");
+    }
+}
 void View::drop(HDROP d) {
+    std::vector<std::string> paths;
     UINT count = DragQueryFileW(d, 0xffffffff, nullptr, 0);
-    size_t total = 0;
-    for (auto &b : app->state.boxes)
-        total += b.items.size();
-    std::wstring failures;
-    unsigned failed = 0, added = 0;
-    UINT limit = std::min(count, 2000u);
-    for (UINT i = 0; i < limit; ++i) {
-        UINT n = DragQueryFileW(d, i, nullptr, 0);
+    size_t totalBytes = 0;
+    for (UINT k = 0; k < count; ++k) {
+        UINT n = DragQueryFileW(d, k, nullptr, 0);
+        if (!n || n > 32760)
+            continue;
+        totalBytes += (n + 1) * sizeof(wchar_t);
+        if (totalBytes > box::MaxConfig)
+            break;
+        std::wstring p(n + 1, 0);
+        if (DragQueryFileW(d, k, p.data(), n + 1) != n)
+            continue;
+        p.resize(n);
         try {
-            if (!n || n > 32760 || total >= box::MaxTotal)
-                throw std::runtime_error("limit");
-            std::wstring path(n + 1, 0);
-            if (DragQueryFileW(d, i, path.data(), n + 1) != n)
-                throw std::runtime_error("drop");
-            path.resize(n);
-            auto p = canonical(path);
-            bool duplicate = false;
-            for (auto &item : data().items)
-                if (box::samePath(item.path, p)) {
-                    duplicate = true;
-                    break;
-                }
-            if (duplicate) {
-                ++failed;
-                if (failed <= 8)
-                    failures += L"\n已在此收纳筐中：" + wide(box::nameOf(p));
-                continue;
-            }
-            if (!box::add(data(), p))
-                throw std::runtime_error("limit");
-            ++added;
-            ++total;
+            paths.push_back(canonical(p));
         } catch (...) {
-            ++failed;
-            if (failed <= 8)
-                failures += L"\n第 " + std::to_wstring(i + 1) + L" 项：无效路径或超过数量限制";
+            paths.push_back({});
         }
     }
-    if (count > limit) {
-        failed += count - limit;
-        failures += L"\n批量添加上限为 2000 项。";
-    }
     DragFinish(d);
-    if (added)
-        changed(true);
-    if (failed)
-        message(hwnd,
-                L"已添加 " + std::to_wstring(added) + L" 项；未添加 " + std::to_wstring(failed) +
-                    L" 项。" + failures,
-                MB_OK | MB_ICONINFORMATION);
+    acceptPaths(std::move(paths));
 }
 void View::menu(POINT p, int item) {
     if (app->modal || modalDepth)
@@ -805,9 +731,16 @@ void View::menu(POINT p, int item) {
     const auto &b = snapshot;
     if (item >= 0) {
         AppendMenuW(m, MF_STRING, OpenItem, L"打开原文件");
-        AppendMenuW(m, MF_STRING, Relocate, L"重新定位引用…");
-        AppendMenuW(m, MF_STRING, RemoveItem, L"移除引用（保留原文件）");
+        if (b.kind == box::Kind::Normal) {
+            AppendMenuW(m, MF_STRING, Relocate, L"重新定位引用…");
+            AppendMenuW(m, MF_STRING, RemoveItem, L"移除引用（保留原文件）");
+        }
         AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    }
+    if (b.kind == box::Kind::Inbox) {
+        AppendMenuW(m, MF_STRING, InboxUnclassified, L"只看未分类");
+        AppendMenuW(m, MF_STRING, InboxAll, L"查看全部桌面文件");
+        AppendMenuW(m, MF_STRING, ViewNew, L"查看新收件");
     }
     AppendMenuW(m, MF_STRING, NewBox, L"新建收纳筐…");
     AppendMenuW(m, MF_STRING, Settings, L"本筐外观与光晕设置…");
@@ -816,6 +749,7 @@ void View::menu(POINT p, int item) {
     AppendMenuW(m, MF_STRING | (b.through ? MF_CHECKED : 0), Through,
                 L"整框点击穿透（从托盘恢复）");
     AppendMenuW(m, MF_STRING, Search, L"搜索已添加的名称…");
+    AppendMenuW(m, MF_STRING, SortManual, L"手动排列");
     AppendMenuW(m, MF_STRING, SortName, L"按名称排序");
     AppendMenuW(m, MF_STRING, SortType, L"按类型排序");
     AppendMenuW(m, MF_STRING, Refresh, L"刷新引用状态");
@@ -827,6 +761,24 @@ void View::menu(POINT p, int item) {
     PostMessageW(app->controller, WM_NULL, 0, 0);
     auto &current = data();
     switch (cmd) {
+    case InboxAll:
+        current.inboxAll = true;
+        changed();
+        break;
+    case InboxUnclassified:
+        current.inboxAll = false;
+        changed();
+        break;
+    case ViewNew:
+        current.inboxAll = true;
+        for (auto &i : current.items)
+            if (i.fresh && jumpPath.empty())
+                jumpPath = i.path;
+        for (auto &i : current.items)
+            i.fresh = false;
+        changed();
+        app->updateInbox();
+        break;
     case NewBox:
         app->create();
         break;
@@ -885,26 +837,13 @@ void View::menu(POINT p, int item) {
     } break;
     case SortName:
     case SortType:
-        std::stable_sort(
-            current.items.begin(), current.items.end(),
-            [&](const box::Item &x, const box::Item &y) {
-                auto a = wide(box::nameOf(x.path)), c = wide(box::nameOf(y.path));
-                if (cmd == SortType) {
-                    auto ext = [](std::wstring s) {
-                        auto p = s.find_last_of(L'.');
-                        return p == std::wstring::npos ? L"" : s.substr(p);
-                    };
-                    auto ea = ext(a), ec = ext(c);
-                    int cmp = CompareStringOrdinal(ea.c_str(), -1, ec.c_str(), -1, TRUE);
-                    if (cmp != CSTR_EQUAL)
-                        return cmp == CSTR_LESS_THAN;
-                }
-                return CompareStringOrdinal(a.c_str(), -1, c.c_str(), -1, TRUE) == CSTR_LESS_THAN;
-            });
-        current.scroll = 0;
+    case SortManual:
+        current.sort = cmd == SortName ? 1 : cmd == SortType ? 2 : 0;
         changed();
         break;
     case Refresh:
+        if (data().kind == box::Kind::Inbox)
+            app->updateInbox();
         if (app->monitor)
             app->monitor->update(app->state);
         break;
@@ -916,6 +855,8 @@ void View::menu(POINT p, int item) {
         break;
     }
 }
+#include "accessibility.inl"
+#include "drop_target.inl"
 LRESULT CALLBACK boxProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     View *v = (View *)GetWindowLongPtrW(h, GWLP_USERDATA);
     if (m == WM_NCCREATE) {
@@ -927,6 +868,14 @@ LRESULT CALLBACK boxProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         return DefWindowProcW(h, m, w, l);
     try {
         switch (m) {
+        case WM_GETOBJECT:
+            if ((LONG)l == OBJID_CLIENT) {
+                auto accessible = new BoxAccessible(v->life);
+                LRESULT result = LresultFromObject(IID_IAccessible, w, accessible);
+                accessible->Release();
+                return result;
+            }
+            break;
         case WM_CREATE:
             DragAcceptFiles(h, TRUE);
             return 0;
@@ -950,6 +899,9 @@ LRESULT CALLBACK boxProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             ScreenToClient(h, &p);
             RECT r;
             GetClientRect(h, &r);
+            if (!design::roundedContains(v->dip(p.x), v->dip(p.y), v->dip(r.right),
+                                         v->dip(r.bottom)))
+                return HTTRANSPARENT;
             int edge = v->px(6);
             if (!v->data().locked && !v->data().collapsed) {
                 bool left = p.x < edge, right = p.x >= r.right - edge, top = p.y < edge,
@@ -1047,11 +999,57 @@ LRESULT CALLBACK boxProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             v->app->dirty();
             return 0;
         case WM_TIMER:
+            if (w == 14) {
+                KillTimer(h, 14);
+                v->notice.clear();
+                v->draw();
+                return 0;
+            }
+            if (w == 16) {
+                v->pumpImports();
+                return 0;
+            }
+            if (w == 15) {
+                if (v->dragScrollDirection) {
+                    int old = v->data().scroll;
+                    v->data().scroll = std::max(0, old + v->dragScrollDirection);
+                    v->draw();
+                    if (v->data().scroll == old) {
+                        v->dragScrollDirection = 0;
+                        KillTimer(h, 15);
+                    }
+                }
+                return 0;
+            }
             if (w == FrameTimer)
                 v->timer();
             return 0;
         case WM_MOUSEMOVE: {
             POINT p{GET_X_LPARAM(l), GET_Y_LPARAM(l)};
+            if (v->scrollDragging) {
+                RECT client;
+                GetClientRect(h, &client);
+                RECT thumb = v->scrollThumb();
+                int top = v->px(v->contentY() + 8),
+                    travel = std::max(
+                        1, int(client.bottom - v->px(10) - top - (thumb.bottom - thumb.top)));
+                int cols = std::max(1, (v->dip(client.right) - 2 * Gap) /
+                                           design::cellWidth(v->data())),
+                    rows = std::max(1, (v->dip(client.bottom) - v->contentY() - 12) /
+                                           design::cellHeight(v->data()));
+                int maximum = std::max(0, ((int)v->filtered.size() + cols - 1) / cols - rows);
+                v->data().scroll =
+                    std::clamp(MulDiv(p.y - v->thumbOffset - top, maximum, travel), 0, maximum);
+                v->draw();
+                v->app->dirty();
+                return 0;
+            }
+            v->tooltipText(p);
+            int hover = v->hit(p);
+            if (hover != v->hovered) {
+                v->hovered = hover;
+                v->draw();
+            }
             if (GetCapture() == h && v->pressed >= -2 &&
                 (abs(p.x - v->down.x) > GetSystemMetrics(SM_CXDRAG) ||
                  abs(p.y - v->down.y) > GetSystemMetrics(SM_CYDRAG))) {
@@ -1063,8 +1061,31 @@ LRESULT CALLBACK boxProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                     SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, MAKELPARAM(screen.x, screen.y));
                     return 0;
                 }
-                if (v->pressed >= 0)
+                if (v->pressed >= 0) {
                     v->dragging = true;
+                    POINT screen = p;
+                    ClientToScreen(h, &screen);
+                    HWND target = WindowFromPoint(screen);
+                    for (auto &box : v->app->views) {
+                        box->dragScrollDirection = 0;
+                        KillTimer(box->hwnd, 15);
+                        box->dropFeedback = 0;
+                        if (box->hwnd == target && !box->data().collapsed && !box->data().through) {
+                            POINT at = screen;
+                            ScreenToClient(target, &at);
+                            RECT r;
+                            GetClientRect(target, &r);
+                            box->dropFeedback = 1;
+                            box->dragScrollDirection = at.y < box->px(box->contentY() + 26) ? -1
+                                                       : at.y > r.bottom - box->px(26)      ? 1
+                                                                                            : 0;
+                            if (box->dragScrollDirection)
+                                SetTimer(target, 15, 50, nullptr);
+                        }
+                        if (IsWindowVisible(box->hwnd))
+                            box->draw();
+                    }
+                }
             }
             if (!v->tracking) {
                 TRACKMOUSEEVENT t{sizeof(t), TME_LEAVE, h, 0};
@@ -1075,6 +1096,8 @@ LRESULT CALLBACK boxProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             if (!v->inside) {
                 v->inside = true;
                 v->smooth = p;
+                v->softX = float(v->dip(p.x));
+                v->softY = float(v->dip(p.y));
             }
             if (v->data().glow && v->app->state.effects && !v->effectFailed && !v->data().through &&
                 !v->app->suspended) {
@@ -1083,12 +1106,15 @@ LRESULT CALLBACK boxProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 else if (v->fade == 0) {
                     v->fade = 1;
                     v->smooth = p;
+                    v->softX = float(v->dip(p.x));
+                    v->softY = float(v->dip(p.y));
                     v->draw();
                 }
             }
             return 0;
         }
         case WM_MOUSELEAVE:
+            v->hovered = -1;
             v->tracking = false;
             v->inside = false;
             if (motionAllowed(v->app) && v->fade > 0)
@@ -1100,13 +1126,47 @@ LRESULT CALLBACK boxProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         case WM_LBUTTONDOWN: {
             v->down = {GET_X_LPARAM(l), GET_Y_LPARAM(l)};
+            SetForegroundWindow(h);
+            SetFocus(h);
+            v->focused = true;
+            RECT client;
+            GetClientRect(h, &client);
+            RECT thumb = v->scrollThumb();
+            if (thumb.right > thumb.left && v->down.x >= client.right - v->px(18) &&
+                v->down.y >= v->px(v->contentY())) {
+                v->scrollDragging = true;
+                v->thumbOffset = PtInRect(&thumb, v->down) ? v->down.y - thumb.top
+                                                           : (thumb.bottom - thumb.top) / 2;
+                v->pressed = -1;
+                SetCapture(h);
+                SendMessageW(h, WM_MOUSEMOVE, w, l);
+                return 0;
+            }
             v->pressed = v->dip(v->down.y) < Title ? -2 : v->hit(v->down);
             v->dragging = false;
+            if (v->pressed >= 0) {
+                v->selected = v->pressed;
+                v->focusPart = 3;
+            } else if (v->dip(v->down.y) < Title)
+                v->focusPart = v->dip(v->down.x) > v->dip(client.right) - 44 ? 2 : 1;
             SetCapture(h);
+            v->draw();
             return 0;
         }
         case WM_LBUTTONUP: {
             POINT p{GET_X_LPARAM(l), GET_Y_LPARAM(l)};
+            if (v->scrollDragging) {
+                v->scrollDragging = false;
+                ReleaseCapture();
+                return 0;
+            }
+            for (auto &box : v->app->views) {
+                box->dragScrollDirection = 0;
+                box->dropFeedback = 0;
+                KillTimer(box->hwnd, 15);
+                if (IsWindowVisible(box->hwnd))
+                    box->draw();
+            }
             int selected = v->pressed;
             bool drag = v->dragging;
             v->pressed = -1;
@@ -1126,15 +1186,47 @@ LRESULT CALLBACK boxProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                                 auto moved = items[selected];
                                 items.erase(items.begin() + selected);
                                 items.insert(items.begin() + to, moved);
+                                v->data().sort = 0;
                                 v->changed();
+                                if (v->data().kind == box::Kind::Inbox)
+                                    v->app->updateInbox();
                             }
                         } else if (box::transfer(v->data(), target->data(), selected)) {
                             v->changed(true);
                             target->changed();
+                            if (v->data().kind == box::Kind::Inbox ||
+                                target->data().kind == box::Kind::Inbox)
+                                v->app->updateInbox();
                         } else
-                            message(h, L"已在此收纳筐中或已达到数量上限；原分类保留。");
+                            v->flash(L"无法归入目标筐，原分类保留");
                         break;
                     }
+                return 0;
+            }
+            if (v->data().kind == box::Kind::Inbox && v->dip(p.y) >= Title &&
+                v->dip(p.y) < v->contentY() && abs(p.x - v->down.x) < GetSystemMetrics(SM_CXDRAG)) {
+                int x = v->dip(p.x);
+                if (x < 96)
+                    v->data().inboxAll = false;
+                else if (x < 180)
+                    v->data().inboxAll = true;
+                else {
+                    v->data().inboxAll = true;
+                    for (auto &item : v->data().items)
+                        if (item.fresh && v->jumpPath.empty())
+                            v->jumpPath = item.path;
+                    for (auto &item : v->data().items)
+                        item.fresh = false;
+                    v->app->updateInbox();
+                }
+                v->changed();
+                return 0;
+            }
+            RECT full;
+            GetClientRect(h, &full);
+            if (!v->importDetails.empty() && GetTickCount64() < v->noticeUntil &&
+                p.y > full.bottom - v->px(34)) {
+                showImportDetails(v);
                 return 0;
             }
             if (selected == -2 && abs(p.x - v->down.x) < GetSystemMetrics(SM_CXDRAG) &&
@@ -1162,6 +1254,14 @@ LRESULT CALLBACK boxProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             return 0;
         }
         case WM_CAPTURECHANGED:
+            v->scrollDragging = false;
+            for (auto &box : v->app->views) {
+                box->dragScrollDirection = 0;
+                box->dropFeedback = 0;
+                KillTimer(box->hwnd, 15);
+                if (IsWindowVisible(box->hwnd))
+                    box->draw();
+            }
             v->pressed = -1;
             v->dragging = false;
             return 0;
@@ -1174,14 +1274,119 @@ LRESULT CALLBACK boxProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             v->menu(p, v->hit(client));
             return 0;
         }
-        case WM_MOUSEWHEEL:
-            if (!v->data().collapsed) {
-                int delta = GET_WHEEL_DELTA_WPARAM(w);
-                v->data().scroll = std::max(0, v->data().scroll - (delta > 0 ? 1 : -1));
+        case WM_MOUSEWHEEL: {
+            POINT cursor;
+            GetCursorPos(&cursor);
+            ScreenToClient(h, &cursor);
+            RECT client;
+            GetClientRect(h, &client);
+            if (!v->data().through &&
+                design::roundedContains(v->dip(cursor.x), v->dip(cursor.y), v->dip(client.right),
+                                        v->dip(client.bottom))) {
+                v->consumeWheel(GET_WHEEL_DELTA_WPARAM(w));
+                return 0;
+            }
+            return DefWindowProcW(h, m, w, l);
+        }
+        case WM_SETFOCUS:
+            v->focused = true;
+            if (!v->focusPart)
+                v->focusPart = 1;
+            v->draw();
+            return 0;
+        case WM_KILLFOCUS:
+            v->focused = false;
+            v->draw();
+            return 0;
+        case WM_GETDLGCODE:
+            return DLGC_WANTARROWS | DLGC_WANTTAB | DLGC_WANTCHARS;
+        case WM_KEYDOWN: {
+            auto &list = v->visible();
+            if (w == VK_TAB) {
+                int max = v->data().collapsed || list.empty() ? 2 : 3;
+                v->focusPart =
+                    1 + (v->focusPart - 1 + (GetKeyState(VK_SHIFT) < 0 ? -1 : 1) + max) % max;
+                if (v->focusPart == 3 && v->selected < 0)
+                    v->selected = list.front();
                 v->draw();
-                v->app->dirty();
+                return 0;
+            }
+            if (w == VK_ESCAPE) {
+                v->selected = -1;
+                v->draw();
+                return 0;
+            }
+            if (w == 'F' && GetKeyState(VK_CONTROL) < 0) {
+                Form f{L"搜索已添加的项目", {L"名称包含"}, {wide(v->query)}};
+                if (form(h, f)) {
+                    v->query = utf8(f.values[0]);
+                    v->filterDirty = true;
+                    v->data().scroll = 0;
+                    v->draw();
+                }
+                return 0;
+            }
+            if (w == VK_RETURN || w == VK_SPACE) {
+                if (v->focusPart == 1)
+                    v->toggle();
+                else if (v->focusPart == 2) {
+                    RECT r;
+                    GetWindowRect(h, &r);
+                    POINT p{r.right - v->px(24), r.top + v->px(Title)};
+                    v->menu(p);
+                } else if (w == VK_RETURN && v->selected >= 0)
+                    v->open(v->selected);
+                return 0;
+            }
+            if (w == VK_DELETE && v->selected >= 0 && v->data().kind == box::Kind::Normal) {
+                auto &items = v->data().items;
+                if (v->selected < (int)items.size()) {
+                    items.erase(items.begin() + v->selected);
+                    v->selected = -1;
+                    v->changed(true);
+                }
+                return 0;
+            }
+            if (v->focusPart == 3 && !list.empty()) {
+                RECT r;
+                GetClientRect(h, &r);
+                int cols = std::max(1, (v->dip(r.right) - 2 * Gap) / design::cellWidth(v->data()));
+                auto it = std::find(list.begin(), list.end(), v->selected);
+                int pos = it == list.end() ? 0 : int(it - list.begin());
+                int step = w == VK_LEFT    ? -1
+                           : w == VK_RIGHT ? 1
+                           : w == VK_UP    ? -cols
+                           : w == VK_DOWN  ? cols
+                                           : 0;
+                if (w == VK_HOME)
+                    pos = 0;
+                else if (w == VK_END)
+                    pos = (int)list.size() - 1;
+                else if (w == VK_PRIOR)
+                    pos -= cols * std::max(1, (v->dip(r.bottom) - v->contentY()) /
+                                                  design::cellHeight(v->data()));
+                else if (w == VK_NEXT)
+                    pos += cols * std::max(1, (v->dip(r.bottom) - v->contentY()) /
+                                                  design::cellHeight(v->data()));
+                else
+                    pos += step;
+                pos = std::clamp(pos, 0, (int)list.size() - 1);
+                v->selected = list[pos];
+                v->ensureVisible(v->selected);
+                return 0;
             }
             return 0;
+        }
+        case WM_SETCURSOR: {
+            int hit = LOWORD(l);
+            LPCWSTR cursor = hit == HTLEFT || hit == HTRIGHT            ? IDC_SIZEWE
+                             : hit == HTTOP || hit == HTBOTTOM          ? IDC_SIZENS
+                             : hit == HTTOPLEFT || hit == HTBOTTOMRIGHT ? IDC_SIZENWSE
+                             : hit == HTTOPRIGHT || hit == HTBOTTOMLEFT ? IDC_SIZENESW
+                                                                        : IDC_ARROW;
+            SetCursor(LoadCursorW(nullptr, cursor));
+            return TRUE;
+        }
         case WM_DROPFILES:
             if (v->data().through || v->data().collapsed) {
                 DragFinish((HDROP)w);
@@ -1201,6 +1406,14 @@ LRESULT CALLBACK boxProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             v->app->visibility(false);
             return 0;
         case WM_DESTROY:
+            if (v->dropRegistered) {
+                RevokeDragDrop(h);
+                v->dropRegistered = false;
+            }
+            *v->life = nullptr;
+            KillTimer(h, 14);
+            KillTimer(h, 15);
+            KillTimer(h, 16);
             DragAcceptFiles(h, FALSE);
             v->stop();
             return 0;
@@ -1235,9 +1448,26 @@ void App::createView(uint32_t id) {
     auto dpiFn = (DpiFn)(void *)GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow");
     if (dpiFn)
         v->dpi = dpiFn(h);
+    {
+        auto target = new DropReceiver(v->life);
+        v->dropRegistered = SUCCEEDED(RegisterDragDrop(h, target));
+        target->Release();
+    }
     v->fit();
     v->updateStyle();
     v->draw();
+    v->tooltip = CreateWindowExW(
+        WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, h, nullptr, instance, nullptr);
+    TOOLINFOW tool{};
+    tool.cbSize = sizeof(tool);
+    tool.uFlags = TTF_SUBCLASS;
+    tool.hwnd = h;
+    tool.uId = 1;
+    GetClientRect(h, &tool.rect);
+    tool.lpszText = (LPWSTR)L" ";
+    SendMessageW(v->tooltip, TTM_ADDTOOLW, 0, (LPARAM)&tool);
+    SendMessageW(v->tooltip, TTM_SETMAXTIPWIDTH, 0, v->px(420));
     ShowWindow(h, SW_SHOWNOACTIVATE);
     views.push_back(std::move(v));
 }
@@ -1254,23 +1484,9 @@ void App::create() {
         message(controller, L"最多支持 50 个收纳筐。");
         return;
     }
-    Form f{state.boxes.empty() ? L"创建第一个收纳筐" : L"创建收纳筐",
-           {L"名称（可自行填写）", L"颜色 #RRGGBB", L"背景不透明度 16–245"},
-           {L"进行中项目", L"#26324A", L"190"}};
-    f.action = state.boxes.empty() ? L"创建第一个收纳筐" : L"创建收纳筐";
-    if (!form(controller, f))
-        return;
     box::Box b;
-    try {
-        if (f.values[0].empty() || f.values[0].size() > 80)
-            throw std::runtime_error("name");
-        b.name = utf8(f.values[0]);
-        b.bg = color(f.values[1]);
-        b.opacity = number(f.values[2], 16, 245);
-    } catch (...) {
-        message(controller, L"名称或颜色、透明度格式无效。请重新创建。");
+    if (!editSettings(this, nullptr, b, true))
         return;
-    }
     b.id = state.nextId++;
     POINT p;
     GetCursorPos(&p);
@@ -1332,10 +1548,56 @@ void App::tray() {
     n.uVersion = NOTIFYICON_VERSION_4;
     Shell_NotifyIconW(NIM_SETVERSION, &n);
 }
+#include "features.inl"
+void App::pauseFor(playback::Reason reason, bool enabled) {
+    sessionGate.set(reason, enabled);
+    bool wasPaused = suspended;
+    suspended = sessionGate.paused();
+    if (suspended) {
+        for (auto &v : views) {
+            v->inside = false;
+            v->fade = 0;
+            v->animating = false;
+            v->fit();
+            v->stop();
+        }
+    } else if (wasPaused) {
+        redraw();
+        if (monitor)
+            monitor->update(state);
+        updateInbox(); // Supplement notifications lost during suspend/disconnection.
+    }
+}
 void App::command(UINT cmd) {
     if (modal || modalDepth)
         return;
     switch (cmd) {
+    case NewInbox:
+        createInbox();
+        break;
+    case GlobalSettings:
+        globalSettings(this);
+        break;
+    case PauseInbox:
+        state.inboxPaused = !state.inboxPaused;
+        updateInbox();
+        redraw();
+        dirty();
+        break;
+    case OpenDesktop:
+        openKnownFolder(controller, FOLDERID_Desktop, true);
+        break;
+    case OpenRecycle:
+        openKnownFolder(controller, FOLDERID_RecycleBinFolder);
+        break;
+    case OpenComputer:
+        openKnownFolder(controller, FOLDERID_ComputerFolder);
+        break;
+    case RestoreDesktopIcons:
+        message(controller,
+                L"桌面右键 → 查看 → "
+                L"显示桌面图标。\n\n本版本未启用自动隐藏；整洁模式将在恢复验证通过后开放。");
+        break;
     case NewBox:
         create();
         break;
@@ -1395,7 +1657,7 @@ void App::command(UINT cmd) {
     case Help:
         message(
             controller,
-            L"桌面归纳盒 0.1.0 "
+            L"桌面归纳盒 0.2.0 "
             L"预览版\n\n拖入只保存路径，不复制或移动原文件。双击入口由系统打开原文件。\n右键可设置"
             L"、搜索、排序或移除引用。拖动图标可在本软件内调整排列、框间分类。\n整框穿透后请从托盘"
             L"恢复交互。锁定位置不影响打开。\n\n使用普通非置顶工具窗口；未使用 Explorer "
@@ -1403,8 +1665,20 @@ void App::command(UINT cmd) {
             L"实机与性能验收，请先用临时文件试用。\n配置：%LOCALAPPDATA%\\DesktopBoxes");
         break;
     case Quit:
+        if (std::any_of(views.begin(), views.end(),
+                        [](auto &v) { return !v->importQueue.empty(); })) {
+            if (ask(controller,
+                    L"仍有项目等待添加。现在退出将保留已添加的引用，未处理项目需要下次重新拖入。原"
+                    L"文件不受影响。\n\n是否现在退出？",
+                    L"桌面归纳盒", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
+                break;
+        }
         quitting = true;
+        wallpaperPreview.reset();
         save();
+        inbox.reset();
+        projections.reset();
+        iconLoader.reset();
         for (auto &v : views)
             DestroyWindow(v->hwnd);
         if (monitor && !monitor->stop()) {
@@ -1435,6 +1709,13 @@ void App::load() {
         if (!readBytes(target, a))
             throw std::runtime_error("read");
         state = box::decode(a);
+        if (!preserveLegacyConfig(dir, a)) {
+            saveBlocked = true;
+            message(controller,
+                    L"旧版配置已读取，但迁移备份未能安全建立。为保留原记录，本次暂停配置写入。请检"
+                    L"查配置目录权限及 state-v0.1.db；原文件不受影响。",
+                    MB_OK | MB_ICONWARNING);
+        }
         for (auto &b : state.boxes) {
             wide(b.name);
             for (auto &i : b.items)
@@ -1499,6 +1780,16 @@ LRESULT CALLBACK controlProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             GetCursorPos(&p);
             HMENU menu = CreatePopupMenu();
             AppendMenuW(menu, MF_STRING, NewBox, L"新建收纳筐…");
+            AppendMenuW(menu, MF_STRING, GlobalSettings, L"软件设置…");
+            AppendMenuW(menu, MF_STRING, NewInbox,
+                        a->inboxData() ? L"显示桌面收件箱" : L"启用桌面收件箱");
+            if (a->inboxData())
+                AppendMenuW(menu, MF_STRING | (a->state.inboxPaused ? MF_CHECKED : 0), PauseInbox,
+                            L"暂停自动收件");
+            AppendMenuW(menu, MF_STRING, OpenDesktop, L"打开真实桌面");
+            AppendMenuW(menu, MF_STRING, OpenComputer, L"此电脑");
+            AppendMenuW(menu, MF_STRING, OpenRecycle, L"回收站");
+            AppendMenuW(menu, MF_STRING, RestoreDesktopIcons, L"恢复原生桌面图标…");
             AppendMenuW(menu, MF_STRING, Settings, L"设置收纳筐…");
             AppendMenuW(menu, MF_STRING, AllCollapse, L"全部折叠");
             AppendMenuW(menu, MF_STRING, AllExpand, L"全部展开");
@@ -1507,7 +1798,7 @@ LRESULT CALLBACK controlProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             AppendMenuW(menu, MF_STRING, ShowAll, L"显示全部（显示桌面后恢复）");
             AppendMenuW(menu, MF_STRING, RestoreInput, L"恢复所有筐的鼠标交互");
             AppendMenuW(menu, MF_STRING | (a->state.effects ? MF_CHECKED : 0), Effects,
-                        L"启用星空光晕");
+                        L"启用悬停光感");
             AppendMenuW(menu, MF_STRING | (a->state.animations ? MF_CHECKED : 0), Animations,
                         L"启用动画（关闭后静态光晕）");
             AppendMenuW(menu, MF_STRING | (startupEnabled() ? MF_CHECKED : 0), Startup,
@@ -1544,15 +1835,95 @@ LRESULT CALLBACK controlProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             a->state.boxes.erase(std::remove_if(a->state.boxes.begin(), a->state.boxes.end(),
                                                 [&](auto &b) { return b.id == id; }),
                                  a->state.boxes.end());
+            a->updateInbox();
             a->dirty(true);
             return 0;
         }
+        case WM_APP + 6:
+            if (a->projections) {
+                for (auto &r : a->projections->take())
+                    if (auto v = a->view(r.id)) {
+                        if (r.revision != v->revision)
+                            continue;
+                        v->filtered = std::move(r.indices);
+                        v->labels = std::move(r.labels);
+                        v->types = std::move(r.types);
+                        v->loading = false;
+                        if (!v->jumpPath.empty()) {
+                            for (size_t k = 0; k < v->data().items.size(); ++k)
+                                if (box::samePath(v->data().items[k].path, v->jumpPath)) {
+                                    v->selected = (int)k;
+                                    v->ensureVisible((int)k);
+                                    break;
+                                }
+                            v->jumpPath.clear();
+                        }
+                        v->draw();
+                    }
+            }
+            return 0;
+        case WM_APP + 7:
+            if (a->iconLoader) {
+                std::set<View *> repaint;
+                for (auto &r : a->iconLoader->take())
+                    for (auto &v : a->views)
+                        if (v->requestedIcons.erase(r.path)) {
+                            if (v->actualIcons.size() >= 96) {
+                                auto oldest = std::min_element(
+                                    v->iconAges.begin(), v->iconAges.end(),
+                                    [](auto &x, auto &y) { return x.second < y.second; });
+                                if (oldest != v->iconAges.end()) {
+                                    v->actualIcons.erase(oldest->first);
+                                    v->iconBitmaps.erase(oldest->first);
+                                    v->iconAges.erase(oldest);
+                                }
+                            }
+                            v->actualIcons[r.path] = r.image;
+                            v->iconAges[r.path] = GetTickCount64();
+                            repaint.insert(v.get());
+                        }
+                for (auto &v : a->views)
+                    if (v->pendingIconRequests) {
+                        v->pendingIconRequests = false;
+                        repaint.insert(v.get());
+                    }
+                for (auto v : repaint)
+                    if (IsWindowVisible(v->hwnd))
+                        v->draw();
+            }
+            return 0;
+        case WM_APP + 8:
+            if (a->inbox) {
+                auto r = a->inbox->take();
+                if (r.revision != a->inboxRevision)
+                    return 0;
+                a->inboxHealthy = r.healthy;
+                a->desktopRoots = std::move(r.roots);
+                if (auto b = a->inboxData()) {
+                    bool different = b->items.size() != r.items.size();
+                    if (!different)
+                        for (size_t i = 0; i < r.items.size(); ++i)
+                            if (b->items[i].path != r.items[i].path ||
+                                b->items[i].fresh != r.items[i].fresh) {
+                                different = true;
+                                break;
+                            }
+                    if (different) {
+                        b->items = std::move(r.items);
+                        if (auto v = a->view(b->id))
+                            v->changed();
+                    }
+                    if (!r.healthy)
+                        if (auto v = a->view(b->id))
+                            v->flash(r.problem);
+                }
+            }
+            return 0;
         case WM_APP + 4:
             if (a->monitor) {
                 auto results = a->monitor->take();
                 for (auto &v : a->views) {
                     v->health.clear();
-                    v->filterDirty = true;
                 }
                 for (auto &result : results)
                     if (auto v = a->view(result.id))
@@ -1563,38 +1934,23 @@ LRESULT CALLBACK controlProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             }
             return 0;
         case WM_WTSSESSION_CHANGE:
-            if (w == WTS_SESSION_LOCK || w == WTS_CONSOLE_DISCONNECT ||
-                w == WTS_REMOTE_DISCONNECT) {
-                a->suspended = true;
-                for (auto &v : a->views) {
-                    v->inside = false;
-                    v->fade = 0;
-                    v->animating = false;
-                    v->fit();
-                    v->stop();
-                }
-            } else if (w == WTS_SESSION_UNLOCK || w == WTS_CONSOLE_CONNECT ||
-                       w == WTS_REMOTE_CONNECT) {
-                a->suspended = false;
-                a->redraw();
-            }
+            if (w == WTS_SESSION_LOCK || w == WTS_SESSION_UNLOCK)
+                a->pauseFor(playback::Reason::Locked, w == WTS_SESSION_LOCK);
+            else if (w == WTS_CONSOLE_DISCONNECT || w == WTS_REMOTE_DISCONNECT)
+                a->pauseFor(playback::Reason::Disconnected, true);
+            else if (w == WTS_CONSOLE_CONNECT || w == WTS_REMOTE_CONNECT)
+                a->pauseFor(playback::Reason::Disconnected, false);
             return 0;
         case WM_POWERBROADCAST:
             if (w == PBT_APMSUSPEND) {
-                a->suspended = true;
-                for (auto &v : a->views) {
-                    v->inside = false;
-                    v->fade = 0;
-                    v->stop();
-                }
+                a->pauseFor(playback::Reason::Sleeping, true);
             } else if (w == PBT_APMRESUMEAUTOMATIC || w == PBT_APMRESUMESUSPEND) {
-                a->suspended = false;
-                a->redraw();
-                if (a->monitor)
-                    a->monitor->update(a->state);
+                a->pauseFor(playback::Reason::Sleeping, false);
             }
             return TRUE;
         case WM_SETTINGCHANGE:
+        case WM_THEMECHANGED:
+        case WM_SYSCOLORCHANGE:
             for (auto &v : a->views) {
                 v->inside = false;
                 v->fade = 0;
@@ -1634,6 +1990,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         awarenessFn(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     else
         SetProcessDPIAware();
+    OleInitialize(nullptr);
+    INITCOMMONCONTROLSEX common{sizeof(common),
+                                ICC_WIN95_CLASSES | ICC_TAB_CLASSES | ICC_BAR_CLASSES};
+    InitCommonControlsEx(&common);
     App app;
     int exitCode = 0;
     app.instance = instance;
@@ -1675,10 +2035,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         WTSRegisterSessionNotification(app.controller, NOTIFY_FOR_THIS_SESSION);
         app.load();
         app.tray();
+        app.projections = std::make_unique<AsyncQueue<ProjectionJob, ProjectionResult>>(
+            app.controller, WM_APP + 6, project);
+        app.iconLoader = std::make_unique<AsyncQueue<IconJob, IconResult>>(app.controller,
+                                                                           WM_APP + 7, systemIcon);
+        app.inbox = std::make_unique<InboxWatcher>(app.controller);
         for (auto &b : app.state.boxes)
             app.createView(b.id);
         app.monitor = std::make_unique<Monitor>(app.controller);
         app.monitor->update(app.state);
+        app.updateInbox();
         if (app.state.boxes.empty() && !app.saveBlocked) {
             message(
                 app.controller,
@@ -1703,8 +2069,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             app.monitor.release();
         app.monitor.reset();
     }
+    app.inbox.reset();
+    app.projections.reset();
+    app.iconLoader.reset();
     app.views.clear();
     GdiplusShutdown(app.gdip);
+    OleUninitialize();
     CoUninitialize();
     CloseHandle(app.singleton);
     ExitProcess(exitCode);

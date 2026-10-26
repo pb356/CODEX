@@ -1,0 +1,127 @@
+[
+  {
+    "repo": "limbo666/DesktopFramesPlus",
+    "commit": "a7d09fcbf067ba98e6894489b45502d548d98e6e",
+    "review_date": "2026-10-26",
+    "license_file": "License.md",
+    "license": "MIT",
+    "adoption": "仅研究行为与设计，未复制源码、二进制或资源；本次改动为 C++ 独立实现",
+    "inspected_files": [
+      {
+        "path": "README.md",
+        "sha256": "605c301c90a54848a7169a83e680a8abc0f39a780d93f0080960199bf7f18303",
+        "url": "https://github.com/limbo666/DesktopFramesPlus/blob/a7d09fcbf067ba98e6894489b45502d548d98e6e/README.md"
+      },
+      {
+        "path": "License.md",
+        "sha256": "904b41cd15402bf7aac9b0e3c3e5955515d843fd6928d72a6a26b9f15a38f678",
+        "url": "https://github.com/limbo666/DesktopFramesPlus/blob/a7d09fcbf067ba98e6894489b45502d548d98e6e/License.md"
+      },
+      {
+        "path": "Code/Desktop Frames/PortalFrameManager.cs",
+        "sha256": "8a6833fc1e4cceeb61cbd080476ae4af48618306579fd2d8463a62359caef46f",
+        "url": "https://github.com/limbo666/DesktopFramesPlus/blob/a7d09fcbf067ba98e6894489b45502d548d98e6e/Code/Desktop%20Frames/PortalFrameManager.cs"
+      },
+      {
+        "path": "Code/Desktop Frames/NonActivatingWindow.cs",
+        "sha256": "fa8f54d553bdc1ac98af12055ba289ba0d1366d6ebf6927668d7fb993a4b6afc",
+        "url": "https://github.com/limbo666/DesktopFramesPlus/blob/a7d09fcbf067ba98e6894489b45502d548d98e6e/Code/Desktop%20Frames/NonActivatingWindow.cs"
+      },
+      {
+        "path": "Code/Desktop Frames/FrameManager.cs",
+        "sha256": "0eb694108104963675b33cb3d965a7a62f5a921972d99f03223c8709d65a3be5",
+        "url": "https://github.com/limbo666/DesktopFramesPlus/blob/a7d09fcbf067ba98e6894489b45502d548d98e6e/Code/Desktop%20Frames/FrameManager.cs"
+      },
+      {
+        "path": "Code/Desktop Frames/LayoutStore.cs",
+        "sha256": "04ed7d5a8d296308104b23bc2764451e4c52871f889117710b1bff10d611a38e",
+        "url": "https://github.com/limbo666/DesktopFramesPlus/blob/a7d09fcbf067ba98e6894489b45502d548d98e6e/Code/Desktop%20Frames/LayoutStore.cs"
+      },
+      {
+        "path": "Code/Desktop Frames/DesktopIconManager.cs",
+        "sha256": "b89fa55b192ae8694b23767180d636514766bd1872dbfa8595cd26defa6e8768",
+        "url": "https://github.com/limbo666/DesktopFramesPlus/blob/a7d09fcbf067ba98e6894489b45502d548d98e6e/Code/Desktop%20Frames/DesktopIconManager.cs"
+      }
+    ]
+  },
+  {
+    "repo": "rocksdanister/lively",
+    "commit": "25a0a5f4ed1988ff42117d3a17feb321062237fe",
+    "review_date": "2026-10-26",
+    "license_file": "LICENSE",
+    "license": "GPL-3.0",
+    "adoption": "仅研究行为与设计，未复制源码、二进制或资源；本次改动为 C++ 独立实现",
+    "inspected_files": [
+      {
+        "path": "LICENSE",
+        "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+        "url": "https://github.com/rocksdanister/lively/blob/25a0a5f4ed1988ff42117d3a17feb321062237fe/LICENSE"
+      },
+      {
+        "path": "src/Lively/Lively/Core/WinDesktopCore.cs",
+        "sha256": "f42da539317c6d297a7175334ac5f4486079937117e73bf319c41a3eea2dc04e",
+        "url": "https://github.com/rocksdanister/lively/blob/25a0a5f4ed1988ff42117d3a17feb321062237fe/src/Lively/Lively/Core/WinDesktopCore.cs"
+      },
+      {
+        "path": "src/Lively/Lively/Core/Suspend/Playback.cs",
+        "sha256": "a907072c5d9cd65af6ff812c5b336e726161f391daf997b77c2808a22090e122",
+        "url": "https://github.com/rocksdanister/lively/blob/25a0a5f4ed1988ff42117d3a17feb321062237fe/src/Lively/Lively/Core/Suspend/Playback.cs"
+      },
+      {
+        "path": "src/Lively/Lively/Core/Suspend/PlaybackDeferrer.cs",
+        "sha256": "79904e0dca570cf720be777717e260fee7b042f2e7e4c4dad55034ccba37a18c",
+        "url": "https://github.com/rocksdanister/lively/blob/25a0a5f4ed1988ff42117d3a17feb321062237fe/src/Lively/Lively/Core/Suspend/PlaybackDeferrer.cs"
+      },
+      {
+        "path": "src/Lively/Lively.Common/Helpers/WindowUtil.cs",
+        "sha256": "439db84cacf1616af791496711c39d526016d7426ed8d85c06551c057d235327",
+        "url": "https://github.com/rocksdanister/lively/blob/25a0a5f4ed1988ff42117d3a17feb321062237fe/src/Lively/Lively.Common/Helpers/WindowUtil.cs"
+      },
+      {
+        "path": "src/Lively/Lively/Core/Watchdog/WatchdogProcess.cs",
+        "sha256": "e0a4d43e19e469cb4e400f048df2565fe08b4b174f4c17a76fa4f6a446bb7cf8",
+        "url": "https://github.com/rocksdanister/lively/blob/25a0a5f4ed1988ff42117d3a17feb321062237fe/src/Lively/Lively/Core/Watchdog/WatchdogProcess.cs"
+      }
+    ]
+  },
+  {
+    "repo": "lepoco/wpfui",
+    "commit": "ffebacd61058170cf63864b7d5aa730cffff848a",
+    "review_date": "2026-10-26",
+    "license_file": "LICENSE",
+    "license": "MIT",
+    "adoption": "仅研究行为与设计，未复制源码、二进制或资源；本次改动为 C++ 独立实现",
+    "inspected_files": [
+      {
+        "path": "LICENSE",
+        "sha256": "ca4cd08a26861c645d8d0e9aa5ddee90278f835c98d3910ec65a8f7a5ecd4341",
+        "url": "https://github.com/lepoco/wpfui/blob/ffebacd61058170cf63864b7d5aa730cffff848a/LICENSE"
+      },
+      {
+        "path": "src/Wpf.Ui/Resources/Variables.xaml",
+        "sha256": "7a10d1f83562e7db84b9a811e070d10213cca0d0380aca76b2e2220bae564af5",
+        "url": "https://github.com/lepoco/wpfui/blob/ffebacd61058170cf63864b7d5aa730cffff848a/src/Wpf.Ui/Resources/Variables.xaml"
+      },
+      {
+        "path": "src/Wpf.Ui/Resources/Typography.xaml",
+        "sha256": "f36f4faab456e926aae13cf443a463555cef72a14515e1eca30bfac4943e39e1",
+        "url": "https://github.com/lepoco/wpfui/blob/ffebacd61058170cf63864b7d5aa730cffff848a/src/Wpf.Ui/Resources/Typography.xaml"
+      },
+      {
+        "path": "src/Wpf.Ui/Appearance/SystemThemeWatcher.cs",
+        "sha256": "dd5103d7b2a2dfba63ee4062aa524e8fcb3bf67bdadd7b8138dfd93c88910526",
+        "url": "https://github.com/lepoco/wpfui/blob/ffebacd61058170cf63864b7d5aa730cffff848a/src/Wpf.Ui/Appearance/SystemThemeWatcher.cs"
+      },
+      {
+        "path": "src/Wpf.Ui/Controls/ToggleSwitch/ToggleSwitch.cs",
+        "sha256": "82aa457444494f3f97e84154ca2741dad4355fcf3ba401611d5cdeda83504670",
+        "url": "https://github.com/lepoco/wpfui/blob/ffebacd61058170cf63864b7d5aa730cffff848a/src/Wpf.Ui/Controls/ToggleSwitch/ToggleSwitch.cs"
+      },
+      {
+        "path": "src/Wpf.Ui.Gallery/Views/Pages/SettingsPage.xaml",
+        "sha256": "3a60b00f3535db20f1e1a9097dc203894ff1bf9a0ba10a5cb915cee31c7b1246",
+        "url": "https://github.com/lepoco/wpfui/blob/ffebacd61058170cf63864b7d5aa730cffff848a/src/Wpf.Ui.Gallery/Views/Pages/SettingsPage.xaml"
+      }
+    ]
+  }
+]

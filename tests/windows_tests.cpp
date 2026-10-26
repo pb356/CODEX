@@ -1,4 +1,6 @@
 #include "../src/platform.hpp"
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 void check(bool b, const char *why) {
     if (!b)
@@ -23,6 +25,19 @@ int wmain() {
         check(WriteFile(h, content, sizeof(content), &n, nullptr) && n == sizeof(content),
               "write temp");
         CloseHandle(h);
+        std::ifstream legacyFile(std::filesystem::path(__FILE__).parent_path() / "fixtures" /
+                                     "legacy-v1.db",
+                                 std::ios::binary);
+        std::vector<uint8_t> legacy{std::istreambuf_iterator<char>(legacyFile), {}};
+        check(!legacy.empty(), "actual legacy fixture readable");
+        h = CreateFileW((dir + L"\\state.db").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0,
+                        nullptr);
+        check(h != INVALID_HANDLE_VALUE, "temporary v1 config");
+        check(WriteFile(h, legacy.data(), (DWORD)legacy.size(), &n, nullptr) && n == legacy.size(),
+              "write v1 fixture");
+        CloseHandle(h);
+        check(preserveLegacyConfig(dir, legacy), "migration backup");
+        check(preserveLegacyConfig(dir, legacy), "migration backup idempotent");
         box::State s;
         s.nextId = 3;
         box::Box a, b;
@@ -46,6 +61,9 @@ int wmain() {
         check(writeConfig(s, dir), "save transfer");
         s.boxes.clear();
         check(writeConfig(s, dir), "remove all references");
+        std::vector<uint8_t> migratedBackup;
+        check(readBytes(dir + L"\\state-v0.1.db", migratedBackup) && migratedBackup == legacy,
+              "migration backup survives later saves");
         h = CreateFileW(file.c_str(), GENERIC_READ,
                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -57,11 +75,13 @@ int wmain() {
         CloseHandle(h);
         check(MoveFileW(file.c_str(), (dir + L"\\renamed.txt").c_str()) != FALSE, "not held open");
         check(DeleteFileW((dir + L"\\renamed.txt").c_str()) != FALSE, "delete temporary original");
-        for (auto name : {L"state.db", L"state.bak", L"state.tmp"})
+        for (auto name : {L"state.db", L"state.bak", L"state.tmp", L"state-v0.1.db"})
             DeleteFileW((dir + L"\\" + name).c_str());
         RemoveDirectoryW(dir.c_str());
         std::cout << "PASS Windows atomic persistence, backup, reference-only lifecycle, original "
                      "content and released handles\n";
+        std::cout
+            << "PASS legacy migration backup remains byte-identical after subsequent v2 writes\n";
         return 0;
     } catch (const std::exception &e) {
         std::cerr << "FAIL " << e.what() << "; inspect test-only directory before cleanup\n";

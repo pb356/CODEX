@@ -1,0 +1,69 @@
+{
+  "date": "2026-10-26",
+  "purpose": "离线原生窗口分层运动预览；不是已验证的动态桌面后端",
+  "style": "已确认 03、04、06、08 的海报／平面插画方向；不采用实拍照片",
+  "reference_policy": "外部 Rawpixel 预览仅用于方向研究，不属于安装素材；不是授权证明。未复制其预览文件进入 assets。",
+  "rights_note": "本次使用图像生成工具制作，按适用服务条款交付；不宣称独占版权或零相似风险。未引入三项目的代码、图标、字体、壁纸。",
+  "limitations": [
+    "源稿与图层不是经验证的原生 4K 素材",
+    "三独立叶片；暂未提供疏密及留白多布局",
+    "Windows 10 动态桌面、遮挡／GPU／节能实测待验证"
+  ],
+  "files": [
+    {
+      "file": "approved-static.png",
+      "sha256": "54b3286a3a2417a9252ac1e77a89ded157859ebaacd33999a08e9785fe14034a",
+      "pixels": [
+        1672,
+        941
+      ],
+      "alpha": false,
+      "origin": "本次 image_gen 原创生成／编辑；静态稿已获用户构图确认",
+      "role": "approved still"
+    },
+    {
+      "file": "background.png",
+      "sha256": "b8de7d65f0b3d3b3f4f8a1b0b835f8f86d39248b367f5d557d5928d3da3e61bf",
+      "pixels": [
+        1672,
+        941
+      ],
+      "alpha": false,
+      "origin": "本次 image_gen 原创生成／编辑；静态稿已获用户构图确认",
+      "role": "fixed background"
+    },
+    {
+      "file": "banana.png",
+      "sha256": "a03475816ad1a99af2e7cdab9fe48782cde3c47e384c3ecd8ddc5ac5d0d736b7",
+      "pixels": [
+        1024,
+        1536
+      ],
+      "alpha": true,
+      "origin": "本次 image_gen 原创生成／编辑；静态稿已获用户构图确认",
+      "role": "independent leaf"
+    },
+    {
+      "file": "monstera.png",
+      "sha256": "1ee9e2e4a8ee281a693edc89830714996c29ad42ecda983b87040bbc69c9ab38",
+      "pixels": [
+        1278,
+        1230
+      ],
+      "alpha": true,
+      "origin": "本次 image_gen 原创生成／编辑；静态稿已获用户构图确认",
+      "role": "independent leaf"
+    },
+    {
+      "file": "anthurium.png",
+      "sha256": "ee828fc5e8e2b672128aa0ba8a36dccd7cf92104cd9fff45014cd56582185b1d",
+      "pixels": [
+        1024,
+        1536
+      ],
+      "alpha": true,
+      "origin": "本次 image_gen 原创生成／编辑；静态稿已获用户构图确认",
+      "role": "independent leaf"
+    }
+  ]
+}

@@ -25,6 +25,10 @@ int wmain() {
     globalApp = &app;
     app.instance = GetModuleHandleW(nullptr);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    OleInitialize(nullptr);
+    INITCOMMONCONTROLSEX common{sizeof(common),
+                                ICC_WIN95_CLASSES | ICC_TAB_CLASSES | ICC_BAR_CLASSES};
+    InitCommonControlsEx(&common);
     GdiplusStartupInput input;
     GdiplusStartup(&app.gdip, &input, nullptr);
     int result = 1;
@@ -123,6 +127,15 @@ int wmain() {
         SendMessageW(v->hwnd, WM_MOUSELEAVE, 0, 0);
         pumpFor(500);
         requireUi(v->fade == 0 && v->lastFrame == 0, "fade completes and timer stops");
+        for (int k = 0; k < 64; ++k) {
+            SendMessageW(v->hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(60 + k, 80));
+            v->toggle();
+            v->toggle();
+            SendMessageW(v->hwnd, WM_MOUSELEAVE, 0, 0);
+        }
+        pumpFor(600);
+        requireUi(!v->animating && v->fade == 0 && v->lastFrame == 0,
+                  "rapid animated fold/hover leaves no frame timer");
         std::cout << "PASS animation completion and stopped fade timer\n";
         app.state.animations = false;
         SendMessageW(v->hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(50, 70));
@@ -195,6 +208,7 @@ int wmain() {
         DeleteFileW((app.dir + L"\\" + n).c_str());
     RemoveDirectoryW(app.dir.c_str());
     GdiplusShutdown(app.gdip);
+    OleUninitialize();
     CoUninitialize();
     return result;
 }

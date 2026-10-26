@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -12,22 +14,35 @@
 #include <windows.h>
 #endif
 namespace box {
-constexpr size_t MaxBoxes = 50, MaxItems = 2000, MaxTotal = 10000, MaxConfig = 8 * 1024 * 1024;
+// Storage and integer bounds protect malformed input; no fixed per-box item quota.
+constexpr size_t MaxBoxes = 50, MaxConfig = 256 * 1024 * 1024;
+enum class Kind : uint32_t { Normal = 0, Inbox = 1 };
+struct WallpaperSettings {
+    uint32_t blankSide = 2, blankPercent = 40, density = 1, tone = 1;
+    uint32_t brightness = 100, saturation = 90, shade = 15, mode = 0, motion = 20;
+    bool enabled = false;
+};
 struct Item {
     std::string path;
+    bool fresh = false;
 };
 struct Box {
     uint32_t id = 0;
     std::string name = "新收纳筐";
     int32_t x = 80, y = 80, w = 380, h = 340, scroll = 0;
-    uint32_t bg = 0x26324a, fg = 0xf0f3ff, glowColor = 0x8888ee;
-    uint32_t opacity = 190, font = 13, icon = 32, brightness = 24, radius = 140, stars = 12;
+    uint32_t bg = 0x28372f, fg = 0xedf2ee, glowColor = 0xb5cdbb;
+    uint32_t opacity = 200, font = 13, icon = 40, brightness = 20, radius = 120, stars = 4;
     bool collapsed = false, locked = false, through = false, glow = true;
+    Kind kind = Kind::Normal;
+    uint32_t theme = 1, effect = 1, sort = 0;
+    bool showCount = true, inboxAll = false;
     std::vector<Item> items;
 };
 struct State {
     uint32_t nextId = 1;
     bool effects = true, animations = true;
+    bool inboxPaused = false;
+    WallpaperSettings wallpaper;
     std::vector<Box> boxes;
 };
 inline bool validUtf8(const std::string &text) {
@@ -81,31 +96,94 @@ inline bool validPath(const std::string &p) {
             return false;
     return true;
 }
-inline bool samePath(std::string a, std::string b) {
-    std::replace(a.begin(), a.end(), '/', '\\');
-    std::replace(b.begin(), b.end(), '/', '\\');
 #ifdef _WIN32
-    auto wide = [](const std::string &s) {
-        int n =
-            MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), (int)s.size(), nullptr, 0);
-        std::wstring w(n, 0);
-        if (n)
-            MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), (int)s.size(), w.data(),
-                                n);
-        return w;
-    };
-    auto x = wide(a), y = wide(b);
-    return !x.empty() && !y.empty() &&
-           CompareStringOrdinal(x.data(), (int)x.size(), y.data(), (int)y.size(), TRUE) ==
-               CSTR_EQUAL;
+using PathKey = std::wstring;
+inline PathKey pathKey(std::string p) {
+    std::replace(p.begin(), p.end(), '/', '\\');
+    int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, p.data(), (int)p.size(), nullptr, 0);
+    if (!n && !p.empty())
+        throw std::runtime_error("UTF8 path");
+    PathKey result(n, 0);
+    if (n)
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, p.data(), (int)p.size(), result.data(),
+                            n);
+    return result;
+}
+struct PathLess {
+    bool operator()(const PathKey &a, const PathKey &b) const {
+        return CompareStringOrdinal(a.data(), (int)a.size(), b.data(), (int)b.size(), TRUE) ==
+               CSTR_LESS_THAN;
+    }
+};
 #else
-    auto lower = [](unsigned char c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; };
-    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(),
-                                              [&](char x, char y) { return lower(x) == lower(y); });
+using PathKey = std::string;
+inline PathKey pathKey(std::string p) {
+    for (char &c : p) {
+        if (c == '/')
+            c = '\\';
+        if (c >= 'A' && c <= 'Z')
+            c += 32;
+    }
+    return p;
+}
+struct PathLess {
+    bool operator()(const PathKey &a, const PathKey &b) const {
+        return a < b;
+    }
+};
 #endif
+using PathSet = std::set<PathKey, PathLess>;
+inline bool samePath(const std::string &a, const std::string &b) {
+    auto x = pathKey(a), y = pathKey(b);
+    PathLess less;
+    return !less(x, y) && !less(y, x);
+}
+inline PathSet itemKeys(const Box &b) {
+    PathSet keys;
+    for (auto &i : b.items)
+        keys.insert(pathKey(i.path));
+    return keys;
+}
+inline bool classified(const State &s, const std::string &path) {
+    for (auto &b : s.boxes)
+        if (b.kind == Kind::Normal)
+            for (auto &i : b.items)
+                if (samePath(i.path, path))
+                    return true;
+    return false;
+}
+inline bool ignoredDesktopName(std::string name) {
+    for (char &c : name)
+        if (c >= 'A' && c <= 'Z')
+            c += 32;
+    auto ends = [&](const char *suffix) {
+        std::string x = suffix;
+        return name.size() >= x.size() && name.compare(name.size() - x.size(), x.size(), x) == 0;
+    };
+    return name == "desktop.ini" || name == "thumbs.db" || name.rfind("~$", 0) == 0 ||
+           name.rfind(".~lock.", 0) == 0 || name.rfind(".temporaryitems", 0) == 0 ||
+           ends(".crdownload") || ends(".partial") || ends(".download") || ends(".tmp") ||
+           ends(".temp") || ends(".part");
+}
+inline void appearance(Box &target, const Box &source) {
+    target.name = source.name;
+    target.bg = source.bg;
+    target.fg = source.fg;
+    target.glowColor = source.glowColor;
+    target.opacity = source.opacity;
+    target.font = source.font;
+    target.icon = source.icon;
+    target.brightness = source.brightness;
+    target.radius = source.radius;
+    target.stars = source.stars;
+    target.glow = source.glow;
+    target.theme = source.theme;
+    target.effect = source.effect;
+    target.showCount = source.showCount;
+    target.locked = source.locked;
 }
 inline bool add(Box &b, const std::string &p) {
-    if (!validPath(p) || b.items.size() >= MaxItems)
+    if (!validPath(p))
         return false;
     for (auto &i : b.items)
         if (samePath(i.path, p))
@@ -114,14 +192,29 @@ inline bool add(Box &b, const std::string &p) {
     return true;
 }
 inline bool transfer(Box &a, Box &b, size_t index) {
-    if (a.id == b.id || index >= a.items.size() || !add(b, a.items[index].path))
+    if (a.id == b.id || index >= a.items.size())
         return false;
-    a.items.erase(a.items.begin() + index);
+    if (b.kind == Kind::Inbox) {
+        bool inDesktop = false;
+        for (auto &i : b.items)
+            if (samePath(i.path, a.items[index].path)) {
+                inDesktop = true;
+                break;
+            }
+        if (!inDesktop || a.kind == Kind::Inbox)
+            return false;
+        a.items.erase(a.items.begin() + index);
+        return true;
+    }
+    if (!add(b, a.items[index].path))
+        return false;
+    if (a.kind != Kind::Inbox)
+        a.items.erase(a.items.begin() + index);
     return true;
 }
 inline std::string nameOf(const std::string &p) {
     auto i = p.find_last_of("/\\");
-    return p.substr(i == std::string::npos ? 0 : i + 1);
+    return i == p.size() - 1 ? p : p.substr(i == std::string::npos ? 0 : i + 1);
 }
 inline uint32_t crc(const std::vector<uint8_t> &a) {
     uint32_t c = ~0u;
@@ -172,7 +265,7 @@ struct Reader {
 inline void validate(const State &s) {
     if (s.boxes.size() > MaxBoxes || !s.nextId)
         throw std::runtime_error("boxes");
-    size_t total = 0;
+    unsigned inboxes = 0;
     std::vector<uint32_t> ids;
     for (auto &b : s.boxes) {
         if (!b.id || b.id >= s.nextId || std::find(ids.begin(), ids.end(), b.id) != ids.end())
@@ -182,23 +275,29 @@ inline void validate(const State &s) {
             std::any_of(b.name.begin(), b.name.end(), [](unsigned char c) { return c < 32; }) ||
             b.name.empty() || b.name.size() > 320 || b.w < 240 || b.h < 120 || b.w > 8192 ||
             b.h > 8192 || b.x < -100000 || b.x > 100000 || b.y < -100000 || b.y > 100000 ||
-            b.scroll < 0 || b.scroll > 10000 || b.opacity < 16 || b.opacity > 245 || b.font < 10 ||
-            b.font > 24 || b.icon < 16 || b.icon > 64 || b.brightness > 60 || b.radius < 40 ||
-            b.radius > 300 || b.stars > 24 || b.bg > 0xffffff || b.fg > 0xffffff ||
-            b.glowColor > 0xffffff || b.items.size() > MaxItems)
+            b.scroll < 0 || b.scroll > INT32_MAX - 1 || b.opacity < 16 || b.opacity > 245 ||
+            b.font < 10 || b.font > 24 || b.icon < 16 || b.icon > 64 || b.brightness > 60 ||
+            b.radius < 40 || b.radius > 300 || b.stars > 24 || b.bg > 0xffffff || b.fg > 0xffffff ||
+            b.glowColor > 0xffffff || b.theme > 3 || b.effect > 2 || b.sort > 2 ||
+            uint32_t(b.kind) > 1)
             throw std::runtime_error("bounds");
-        total += b.items.size();
-        for (size_t i = 0; i < b.items.size(); ++i) {
-            if (!validPath(b.items[i].path))
+        if (b.kind == Kind::Inbox && ++inboxes > 1)
+            throw std::runtime_error("multiple inboxes");
+        PathSet keys;
+        for (auto &item : b.items) {
+            if (!validPath(item.path))
                 throw std::runtime_error("path");
-            for (size_t j = 0; j < i; ++j)
-                if (samePath(b.items[i].path, b.items[j].path))
-                    throw std::runtime_error("duplicate");
+            if (!keys.insert(pathKey(item.path)).second)
+                throw std::runtime_error("duplicate");
         }
     }
-    if (total > MaxTotal)
-        throw std::runtime_error("total");
+    auto &w = s.wallpaper;
+    if (w.blankSide > 2 || w.blankPercent < 25 || w.blankPercent > 55 || w.density > 2 ||
+        w.tone > 2 || w.brightness > 150 || w.saturation > 150 || w.shade > 70 || w.mode > 2 ||
+        w.motion > 100)
+        throw std::runtime_error("wallpaper settings");
 }
+
 inline std::vector<uint8_t> encode(const State &s) {
     validate(s);
     Writer w;
@@ -228,11 +327,31 @@ inline std::vector<uint8_t> encode(const State &s) {
         w.u(b.through);
         w.u(b.glow);
         w.u((uint32_t)b.items.size());
-        for (auto &i : b.items)
+        for (auto &i : b.items) {
             w.s(i.path);
+            w.u(i.fresh);
+        }
+        w.u(uint32_t(b.kind));
+        w.u(b.theme);
+        w.u(b.effect);
+        w.u(b.sort);
+        w.u(b.showCount);
+        w.u(b.inboxAll);
     }
+    w.u(s.inboxPaused);
+    auto &wp = s.wallpaper;
+    w.u(wp.blankSide);
+    w.u(wp.blankPercent);
+    w.u(wp.density);
+    w.u(wp.tone);
+    w.u(wp.brightness);
+    w.u(wp.saturation);
+    w.u(wp.shade);
+    w.u(wp.mode);
+    w.u(wp.motion);
+    w.u(wp.enabled);
     Writer out;
-    out.u(0x31425844);
+    out.u(0x32425844);
     out.u(crc(w.a));
     out.a.insert(out.a.end(), w.a.begin(), w.a.end());
     if (out.a.size() > MaxConfig)
@@ -243,7 +362,9 @@ inline State decode(const std::vector<uint8_t> &a) {
     if (a.size() < 8 || a.size() > MaxConfig)
         throw std::runtime_error("size");
     Reader r{a};
-    if (r.u() != 0x31425844)
+    auto magic = r.u();
+    bool v2 = magic == 0x32425844;
+    if (!v2 && magic != 0x31425844)
         throw std::runtime_error("version");
     auto checksum = r.u();
     std::vector<uint8_t> payload(a.begin() + 8, a.end());
@@ -279,11 +400,42 @@ inline State decode(const std::vector<uint8_t> &a) {
         b.through = r.flag();
         b.glow = r.flag();
         auto count = r.u();
-        if (count > MaxItems)
+        if (count > (a.size() - r.p) / 4)
             throw std::runtime_error("items");
-        for (uint32_t j = 0; j < count; ++j)
-            b.items.push_back({r.s(32760)});
+        b.items.reserve(count);
+        for (uint32_t j = 0; j < count; ++j) {
+            Item item;
+            item.path = r.s(32760);
+            if (v2)
+                item.fresh = r.flag();
+            b.items.push_back(std::move(item));
+        }
+        if (v2) {
+            b.kind = Kind(r.u());
+            b.theme = r.u();
+            b.effect = r.u();
+            b.sort = r.u();
+            b.showCount = r.flag();
+            b.inboxAll = r.flag();
+        } else {
+            b.theme = 3;
+            b.effect = b.glow ? 1 : 0;
+        }
         s.boxes.push_back(std::move(b));
+    }
+    if (v2) {
+        s.inboxPaused = r.flag();
+        auto &wp = s.wallpaper;
+        wp.blankSide = r.u();
+        wp.blankPercent = r.u();
+        wp.density = r.u();
+        wp.tone = r.u();
+        wp.brightness = r.u();
+        wp.saturation = r.u();
+        wp.shade = r.u();
+        wp.mode = r.u();
+        wp.motion = r.u();
+        wp.enabled = r.flag();
     }
     if (r.p != a.size())
         throw std::runtime_error("trailing");

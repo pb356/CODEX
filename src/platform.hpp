@@ -69,6 +69,31 @@ inline int ask(HWND h, const wchar_t *text, const wchar_t *title, UINT flags) {
 inline void message(HWND h, const std::wstring &text, UINT flags = MB_OK | MB_ICONINFORMATION) {
     ask(h, text.c_str(), L"桌面归纳盒", flags);
 }
+inline bool openKnownFolder(HWND owner, REFKNOWNFOLDERID id, bool physical = false) {
+    SHELLEXECUTEINFOW info{};
+    info.cbSize = sizeof(info);
+    info.hwnd = owner;
+    info.lpVerb = L"open";
+    info.nShow = SW_SHOWNORMAL;
+    info.fMask = SEE_MASK_FLAG_NO_UI;
+    if (physical) {
+        PWSTR path = nullptr;
+        if (FAILED(SHGetKnownFolderPath(id, 0, nullptr, &path)))
+            return false;
+        info.lpFile = path;
+        bool ok = ShellExecuteExW(&info) != FALSE;
+        CoTaskMemFree(path);
+        return ok;
+    }
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    if (FAILED(SHGetKnownFolderIDList(id, 0, nullptr, &pidl)))
+        return false;
+    info.fMask |= SEE_MASK_IDLIST;
+    info.lpIDList = pidl;
+    bool ok = ShellExecuteExW(&info) != FALSE;
+    CoTaskMemFree(pidl);
+    return ok;
+}
 inline std::wstring configDir() {
     PWSTR p = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &p)))
@@ -116,6 +141,19 @@ inline bool writeConfig(const box::State &s, const std::wstring &dir) {
     if (!ok)
         DeleteFileW(temp.c_str());
     return ok;
+}
+inline bool preserveLegacyConfig(const std::wstring &dir, const std::vector<uint8_t> &bytes) {
+    if (bytes.size() < 4 || bytes[0] != 0x44 || bytes[1] != 0x58 || bytes[2] != 0x42 ||
+        bytes[3] != 0x31)
+        return true;
+    auto backup = dir + L"\\state-v0.1.db";
+    if (CopyFileW((dir + L"\\state.db").c_str(), backup.c_str(), TRUE))
+        return true;
+    if (GetLastError() != ERROR_FILE_EXISTS)
+        return false;
+    std::vector<uint8_t> existing;
+    return readBytes(backup, existing) &&
+           existing == bytes; // Never overwrite another migration backup.
 }
 struct Health {
     uint32_t id;
